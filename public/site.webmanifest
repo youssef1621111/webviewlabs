@@ -1,0 +1,13 @@
+{
+  "name": "webviewlabs — digital products with a point of view",
+  "short_name": "webviewlabs",
+  "description": "Digital products, commerce experiences, and brand systems for ambitious businesses.",
+  "start_url": "/en/",
+  "display": "standalone",
+  "background_color": "#f2efe8",
+  "theme_color": "#f2efe8",
+  "lang": "en",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

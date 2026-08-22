@@ -1,0 +1,12 @@
+# webviewlabs
+
+> Independent digital studio building clear digital products, brand systems, and high-trust experiences.
+
+## Site
+
+- [Home - English](/en/): Digital products, commerce experiences, and brand systems for ambitious businesses.
+- [الرئيسية - العربية](/ar/): منتجات رقمية وتجارب تجارة إلكترونية وأنظمة علامات للأعمال الطموحة.
+- [Selected work](/en/projects/): Shakalita and Eloobor live projects.
+- [Our approach](/en/approach/): the WebViewLabs method.
+- [The people](/en/people/): Youssef Mohamed and Bejimy Milad.
+- [Start a project](/en/contact/): project enquiry form.
