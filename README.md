@@ -40,3 +40,4 @@ The public site uses crawlable bilingual routes such as `/en/projects/` and `/ar
 - `src/components/ContactForm.tsx` owns validation and submission states.
 - `src/lib/contact.ts` and `src/lib/supabase.ts` contain the browser-safe Supabase boundary.
 - `docs/superpowers/specs/2026-08-22-webviewlabs-studio-design.md` records the design direction and security decisions.
+# webviewlabs
