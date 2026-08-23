@@ -80,6 +80,44 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return
+      }
+
+      const target = (event.target as HTMLElement | null)?.closest('a')
+      if (!target || !target.href) return
+      if (target.target && target.target !== '_self') return
+      if (target.hasAttribute('download')) return
+
+      const url = new URL(target.href, window.location.origin)
+      if (url.origin !== window.location.origin) return
+      if (url.pathname === window.location.pathname && url.hash) return
+
+      event.preventDefault()
+      const nextLocale = localeFromPathname(url.pathname)
+      const nextPage = pageFromPathname(url.pathname)
+      const targetPath = pagePath(nextLocale, nextPage)
+
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({}, '', targetPath)
+      }
+      setLocale(nextLocale)
+      setPage(nextPage)
+    }
+
+    document.addEventListener('click', handleClick)
+    return () => document.removeEventListener('click', handleClick)
+  }, [])
+
+  useEffect(() => {
     document.documentElement.lang = locale
     document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr'
     updateSeo(locale, page)
