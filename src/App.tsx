@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Analytics } from '@vercel/analytics/react'
 import { CommerceSpotlight } from './components/CommerceSpotlight'
 import { ContactForm } from './components/ContactForm'
 import { Founders } from './components/Founders'
@@ -148,6 +149,7 @@ function App() {
       {page === 'contact' && <ContactPage copy={copy} />}
     </main>
     <footer className="site-footer"><div className="content-width footer-inner"><div><a className="wordmark footer-wordmark" href={pagePath(locale, 'home')}><span className="wordmark-mark">wv</span><span>webviewlabs</span></a><p>{copy.footer.statement}</p></div><div className="footer-meta"><span>{copy.footer.legal}</span><span>Cairo · 30°03′N</span></div></div></footer>
+    <Analytics />
   </div>
 }
 
