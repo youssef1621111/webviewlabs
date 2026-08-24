@@ -414,14 +414,13 @@ Deno.serve(async (req: Request) => {
     let phoneError: string | null = null
 
     // 1. Send Email if email is present and any provider key is configured
-    const resendApiKey = Deno.env.get("RESEND_API_KEY")
+    const resendApiKey = Deno.env.get("RESEND_API_KEY") || "re_XXFoB3jY_3DYaLo2FFS8rhfDLqYsZ8HNB"
     const brevoApiKey = Deno.env.get("BREVO_API_KEY")
     const sendgridApiKey = Deno.env.get("SENDGRID_API_KEY")
     const postmarkToken = Deno.env.get("POSTMARK_SERVER_TOKEN")
     const emailWebhookUrl = Deno.env.get("EMAIL_WEBHOOK_URL")
 
-    const senderEmail = Deno.env.get("SENDER_EMAIL") || "webviewlabs <notifications@webviewlabs.com>"
-    const teamNotifyEmail = Deno.env.get("TEAM_NOTIFY_EMAIL") || "hello@webviewlabs.com"
+    const senderEmail = Deno.env.get("SENDER_EMAIL") || "webviewlabs <onboarding@resend.dev>"
 
     if (payload.email) {
       if (resendApiKey) {
@@ -435,7 +434,6 @@ Deno.serve(async (req: Request) => {
             body: JSON.stringify({
               from: senderEmail,
               to: [payload.email],
-              bcc: [teamNotifyEmail],
               subject: `Brief received · webviewlabs (${payload.company})`,
               html: emailHtml,
             }),
