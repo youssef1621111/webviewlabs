@@ -44,12 +44,7 @@ function generateWebviewLabsEmailHtml(data: ContactSubmission): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Brief Received · webviewlabs</title>
   <style>
-    body {
-      margin: 0; padding: 0;
-      background-color: #f2efe8;
-      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #171717;
-    }
+    body { margin: 0; padding: 0; background-color: #f2efe8; font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; color: #171717; }
     .wrapper { width: 100%; table-layout: fixed; background-color: #f2efe8; padding: 32px 16px; }
     .main { max-width: 620px; margin: 0 auto; background-color: #ffffff; border: 2px solid #171717; }
     .header { background-color: #171717; color: #f2efe8; padding: 24px 32px; border-bottom: 4px solid #b52d20; }
@@ -67,7 +62,7 @@ function generateWebviewLabsEmailHtml(data: ContactSubmission): string {
         <p style="margin: 4px 0 0; font-size: 10px; color: #aaa69d; text-transform: uppercase;">Digital Studio for Leading Brands · Cairo / Everywhere</p>
       </div>
       <div class="hero">
-        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; opacity: 0.9;">New Client Brief Received</div>
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; opacity: 0.9;">Project Brief Received</div>
         <h1 style="margin: 0; font-size: 24px; font-weight: 700; color: #ffffff;">${safeCompany} — Project Brief</h1>
       </div>
       <div class="content">
@@ -81,11 +76,8 @@ function generateWebviewLabsEmailHtml(data: ContactSubmission): string {
           </table>
         </div>
         <div style="font-size: 14px; line-height: 1.7; color: #2b2b2b;">
-          <h3 style="font-size: 14px; text-transform: uppercase; color: #171717; margin-bottom: 8px;">Project Scope / Brief:</h3>
+          <h3 style="font-size: 14px; text-transform: uppercase; color: #171717; margin-bottom: 8px;">Project Scope:</h3>
           <p style="background: #fdfcfb; border-left: 3px solid #b52d20; padding: 12px 16px; margin: 0;">${safeBrief}</p>
-        </div>
-        <div style="margin-top: 24px; text-align: center;">
-          <a href="https://webviewlabs.vercel.app/admin?view=crm" style="background: #171717; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 12px; font-weight: bold; display: inline-block;">Open in Studio CRM & Pipeline →</a>
         </div>
       </div>
       <div class="footer">
@@ -116,17 +108,62 @@ Deno.serve(async (req: Request) => {
     const emailHtml = generateWebviewLabsEmailHtml(payload)
 
     let emailSent = false
+    let phoneSent = false
     let emailStatus = "pending"
-    let emailError: string | null = null
-    let telegramSent = false
-    let discordSent = false
 
+    const brevoApiKey = Deno.env.get("BREVO_API_KEY") || "xsmtpsib-81585ab5f71330154206b48168d56e0719fd0bbb65f4dcbf7d12eed81ceddbf4-cDWZiRoKI1rGo5ZK"
     const resendApiKey = Deno.env.get("RESEND_API_KEY") || "re_XXFoB3jY_3DYaLo2FFS8rhfDLqYsZ8HNB"
-    const founderEmail = Deno.env.get("FOUNDER_EMAIL") || "delivered@resend.dev"
-    const senderEmail = Deno.env.get("SENDER_EMAIL") || "webviewlabs <onboarding@resend.dev>"
 
-    // 1. Send Internal Lead Alert to Founder / Studio Team via Resend
-    if (resendApiKey) {
+    // 1. Send Email via Brevo REST API
+    if (brevoApiKey && payload.email) {
+      try {
+        const brevoRes = await fetch("https://api.brevo.com/v3/smtp/email", {
+          method: "POST",
+          headers: {
+            "api-key": brevoApiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            sender: { name: "webviewlabs", email: "hello@webviewlabs.com" },
+            to: [{ email: payload.email, name: payload.name }],
+            subject: `Brief received · webviewlabs (${payload.company})`,
+            htmlContent: emailHtml,
+          }),
+        })
+        if (brevoRes.ok) {
+          emailSent = true
+          emailStatus = "sent_via_brevo"
+        }
+      } catch (e: any) {
+        console.warn("Brevo email note:", e.message)
+      }
+    }
+
+    // 2. Send SMS via Brevo
+    if (brevoApiKey && payload.phone) {
+      try {
+        let cleanPhone = payload.phone.replace(/[^0-9+]/g, "")
+        if (cleanPhone.startsWith("01") && cleanPhone.length === 11) cleanPhone = "+2" + cleanPhone
+        const smsRes = await fetch("https://api.brevo.com/v3/transactionalSMS/send", {
+          method: "POST",
+          headers: {
+            "api-key": brevoApiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            sender: "webviewlabs",
+            recipient: cleanPhone,
+            content: `webviewlabs | تم استلام طلب مشروعك (${payload.company}) بنجاح. سنراجع التفاصيل ونتواصل معك قريباً.`,
+          }),
+        })
+        if (smsRes.ok) phoneSent = true
+      } catch (e: any) {
+        console.warn("Brevo SMS note:", e.message)
+      }
+    }
+
+    // 3. Fallback: Internal alert via Resend
+    if (!emailSent && resendApiKey) {
       try {
         const res = await fetch("https://api.resend.com/emails", {
           method: "POST",
@@ -135,95 +172,19 @@ Deno.serve(async (req: Request) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: senderEmail,
-            to: [founderEmail],
+            from: "webviewlabs <onboarding@resend.dev>",
+            to: ["delivered@resend.dev"],
             subject: `🔥 New Lead: ${payload.company} (${payload.name}) · webviewlabs`,
             html: emailHtml,
           }),
         })
-
-        if (res.ok) {
-          emailSent = true
-          emailStatus = "founder_notified"
-        } else {
-          const errText = await res.text()
-          console.warn("Founder notification note:", errText)
-        }
+        if (res.ok) emailStatus = "founder_alert_sent"
       } catch (e: any) {
-        console.warn("Resend notification error:", e.message)
+        console.warn("Resend alert note:", e.message)
       }
     }
 
-    // 2. Attempt to send confirmation to client email (if custom domain is configured)
-    if (payload.email && resendApiKey) {
-      try {
-        const clientRes = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${resendApiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            from: senderEmail,
-            to: [payload.email],
-            subject: `Brief received · webviewlabs (${payload.company})`,
-            html: emailHtml,
-          }),
-        })
-
-        if (clientRes.ok) {
-          emailSent = true
-          emailStatus = "sent_to_client_and_founder"
-        } else {
-          const clientErr = await clientRes.text()
-          // If on vercel subdomain, Resend requires custom domain for client sending
-          if (clientRes.status === 422 || clientRes.status === 403) {
-            emailError = "Subdomain mode: Lead alert sent to founders. Client auto-reply requires verified custom domain."
-          } else {
-            emailError = clientErr
-          }
-        }
-      } catch (e: any) {
-        emailError = e.message
-      }
-    }
-
-    // 3. Optional: Discord Webhook Notification
-    const discordWebhookUrl = Deno.env.get("DISCORD_WEBHOOK_URL")
-    if (discordWebhookUrl) {
-      try {
-        const waLink = `https://wa.me/${payload.phone.replace(/[^0-9]/g, "")}`
-        await fetch(discordWebhookUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: `🔥 **New Project Brief Received at webviewlabs!**\n**Company:** ${payload.company}\n**Client:** ${payload.name}\n**Phone:** ${payload.phone} ([WhatsApp](${waLink}))\n**Email:** ${payload.email || "N/A"}\n**Budget:** ${payload.budget || "N/A"}\n**Brief:** ${payload.brief.slice(0, 300)}...`,
-          }),
-        })
-        discordSent = true
-      } catch { /* ignore */ }
-    }
-
-    // 4. Optional: Telegram Bot Notification
-    const tgToken = Deno.env.get("TELEGRAM_BOT_TOKEN")
-    const tgChatId = Deno.env.get("TELEGRAM_CHAT_ID")
-    if (tgToken && tgChatId) {
-      try {
-        const text = `🔥 *New Brief Received · webviewlabs*\n\n*Client:* ${payload.name}\n*Company:* ${payload.company}\n*Phone:* \`${payload.phone}\`\n*Budget:* ${payload.budget || "N/A"}\n\n*Brief:*\n${payload.brief}`
-        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: tgChatId,
-            text,
-            parse_mode: "Markdown",
-          }),
-        })
-        telegramSent = true
-      } catch { /* ignore */ }
-    }
-
-    // 5. Update notification payload in Supabase Database
+    // 4. Update status in Supabase Database
     const supabaseUrl = Deno.env.get("SUPABASE_URL")
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
     if (supabaseUrl && supabaseServiceKey) {
@@ -232,14 +193,12 @@ Deno.serve(async (req: Request) => {
         await supabaseAdmin
           .from("contact_submissions")
           .update({
-            email_status: emailSent ? "sent" : "admin_notified",
-            phone_status: "received",
+            email_status: emailSent ? "sent" : emailStatus,
+            phone_status: phoneSent ? "sent" : "received",
             notification_payload: {
               emailSent,
+              phoneSent,
               emailStatus,
-              emailError,
-              telegramSent,
-              discordSent,
               processedAt: new Date().toISOString(),
             },
           })
@@ -255,24 +214,16 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         success: true,
         emailSent,
+        phoneSent,
         emailStatus,
-        emailError,
-        telegramSent,
-        discordSent,
-        message: "Brief notification dispatched successfully.",
+        message: "Notification pipeline executed.",
       }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
   } catch (err: any) {
     return new Response(
       JSON.stringify({ error: err.message || "Unknown error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
   }
 })

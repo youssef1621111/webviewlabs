@@ -22,8 +22,19 @@ export function ContactForm({ copy }: ContactFormProps) {
       brief: String(form.get('brief') ?? '').trim(),
       budget: String(form.get('budget') ?? '').trim(),
     }
-    if (!payload.name || !payload.phone || !payload.company || !payload.brief) {
-      setErrorMessage(copy.contact.error)
+    const missing = []
+    if (!payload.name) missing.push('name')
+    if (!payload.phone) missing.push('phone')
+    if (!payload.company) missing.push('company')
+    if (!payload.brief) missing.push('brief')
+
+    if (missing.length > 0) {
+      const isArabic = document.documentElement.lang === 'ar'
+      setErrorMessage(
+        isArabic
+          ? 'يرجى إكمال الحقول المطلوبة: الاسم، الهاتف، الشركة، وتفاصيل المشروع.'
+          : 'Please complete the required fields: Name, Phone, Company, and Brief.'
+      )
       setStatus('error')
       return
     }
@@ -40,6 +51,7 @@ export function ContactForm({ copy }: ContactFormProps) {
       setStatus('error')
     }
   }
+
 
 
   const message = status === 'success' ? copy.contact.success : status === 'fallback' ? copy.contact.fallbackSuccess : errorMessage
