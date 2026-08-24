@@ -735,19 +735,70 @@ export function generatePrintableDocumentHtml(
 
     @media print {
       body {
-        background: transparent !important;
+        background: #ffffff !important;
         padding: 0 !important;
+        margin: 0 !important;
       }
       .doc-container {
         border: 1px solid #171717 !important;
         box-shadow: none !important;
         max-width: 100% !important;
         width: 100% !important;
+        margin: 0 !important;
       }
+      .print-floating-bar {
+        display: none !important;
+      }
+      p, li, tr, blockquote, pre, .client-badge-box, .signature-grid, .doc-header, .doc-footer {
+        break-inside: avoid !important;
+        page-break-inside: avoid !important;
+      }
+      h1, h2, h3, h4 {
+        break-after: avoid !important;
+        page-break-after: avoid !important;
+      }
+    }
+
+    .print-floating-bar {
+      position: sticky;
+      top: 0;
+      z-index: 9999;
+      background: #171717;
+      color: #f2efe8;
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      margin-bottom: 24px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+    }
+    .print-btn {
+      background: #b52d20;
+      color: #ffffff;
+      border: none;
+      padding: 8px 18px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
     }
   </style>
 </head>
 <body>
+  <!-- Floating Print Toolbar for Standalone View -->
+  <div class="print-floating-bar">
+    <div>
+      <strong style="color: #ffffff;">webviewlabs · Client Document Suite</strong>
+      <span style="color: #aaa69d; margin-left: 12px; font-size: 11px;">(Tip: In print preview, check "Background graphics" on)</span>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <button class="print-btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
+      <button style="background: transparent; border: 1px solid #555; color: #f2efe8; padding: 8px 14px; font-family: 'DM Mono', monospace; cursor: pointer;" onclick="window.close()">✕ Close</button>
+    </div>
+  </div>
+
   <div class="doc-container">
     
     <!-- Top Studio Header -->
@@ -809,6 +860,7 @@ export function generatePrintableDocumentHtml(
   </script>
 </body>
 </html>`
+
 }
 
 export async function downloadDocumentAsPdfFile(

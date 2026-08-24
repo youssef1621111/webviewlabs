@@ -409,47 +409,56 @@ export function ClientDocumentSuite({
               </div>
 
               {/* Action Buttons: Real PDF Download, Print Tab, Copy, Email */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handlePrintWindow}
+                  className="button"
+                  title="Open crisp vector printable view / save as PDF"
+                  style={{
+                    background: '#171717',
+                    color: '#f2efe8',
+                    borderColor: '#171717',
+                    minHeight: '36px',
+                    padding: '0 14px',
+                    fontSize: '11px',
+                    fontFamily: '"DM Mono", monospace',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '2px 2px 0 #b52d20',
+                    cursor: 'pointer',
+                  }}
+                >
+                  🖨️ {isArabic ? 'حفظ كـ PDF / طباعة (فائق الجودة)' : 'Save as PDF (Vector Crisp)'}
+                </button>
+
                 <button
                   onClick={handleDownloadRealPdf}
                   disabled={isDownloadingPdf}
                   className="button"
+                  title="Download direct PDF file"
                   style={{
-                    background: 'var(--red)',
-                    color: '#fff',
-                    borderColor: 'var(--red)',
+                    background: '#fff',
+                    color: '#b52d20',
+                    borderColor: '#b52d20',
                     minHeight: '36px',
-                    padding: '0 16px',
+                    padding: '0 12px',
                     fontSize: '11px',
                     fontFamily: '"DM Mono", monospace',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
-                    boxShadow: '2px 2px 0 var(--ink)',
                     cursor: isDownloadingPdf ? 'wait' : 'pointer',
                   }}
                 >
                   {isDownloadingPdf ? (
-                    <span>⏳ {isArabic ? 'جارٍ إنشاء وتحميل PDF…' : 'Generating PDF…'}</span>
+                    <span>⏳ {isArabic ? 'جارٍ التحميل…' : 'Downloading…'}</span>
                   ) : (
-                    <span>⬇️ {isArabic ? 'تحميل ملف PDF (.pdf)' : 'Download PDF File (.pdf)'}</span>
+                    <span>⬇️ {isArabic ? 'تحميل .PDF' : 'Download .PDF'}</span>
                   )}
                 </button>
 
-                <button
-                  onClick={handlePrintWindow}
-                  className="button"
-                  title="Open isolated printable view in new window"
-                  style={{
-                    background: '#fff',
-                    minHeight: '36px',
-                    padding: '0 12px',
-                    fontSize: '11px',
-                    fontFamily: '"DM Mono", monospace',
-                  }}
-                >
-                  🖨️ {isArabic ? 'طباعة' : 'Print Window'}
-                </button>
 
                 <button
                   onClick={handleCopy}
