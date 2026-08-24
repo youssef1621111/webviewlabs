@@ -1,4 +1,4 @@
-// CRM Types — matches DB schema
+// CRM & Financial Ledger Types
 
 export type Deal = {
   id: string
@@ -29,6 +29,21 @@ export type Task = {
   created_at: string
 }
 
+export type ExpenseFrequency = 'one_time' | 'monthly' | 'yearly' | 'weekly' | 'daily'
+export type ExpenseCategory = 'hosting' | 'domain' | 'tools' | 'contractor' | 'marketing' | 'legal' | 'other'
+
+export type ExpenseItem = {
+  id: string
+  deal_id: string
+  task_id: string | null
+  title: string
+  amount: number
+  frequency: ExpenseFrequency
+  category: ExpenseCategory
+  paid_at: string
+  created_at: string
+}
+
 export type Transaction = {
   id: string
   deal_id: string | null
@@ -52,6 +67,7 @@ export type DealWithRelations = Deal & {
   }
   tasks?: Task[]
   transactions?: Transaction[]
+  expensesList?: ExpenseItem[]
 }
 
 export type DealFilterTab =
@@ -84,23 +100,42 @@ export const DEFAULT_TASKS: Omit<Task, 'id' | 'deal_id' | 'created_at'>[] = [
 ]
 
 // Financial helpers
-export function calcDealFinancials(deal: Deal | DealWithRelations, transactions: Transaction[], tasks?: Task[]) {
+export function calcDealFinancials(
+  deal: Deal | DealWithRelations,
+  transactions: Transaction[],
+  tasks?: Task[],
+  expenseItems: ExpenseItem[] = []
+) {
   const dealTx = transactions.filter((t) => t.deal_id === deal.id)
   const incomeTx = dealTx.filter((t) => t.type === 'income')
   const expenseTx = dealTx.filter((t) => t.type === 'expense')
 
-  const cashIn = incomeTx.reduce((s, t) => s + t.amount, 0)
-  const cashOut = expenseTx.reduce((s, t) => s + t.amount, 0)
-  const totalExpenses = (deal.expenses || 0) + cashOut
-  const netProfit = cashIn - totalExpenses
-  const margin = cashIn > 0 ? Math.round((netProfit / cashIn) * 100) : 0
+  const dealExpenses = expenseItems.filter((e) => e.deal_id === deal.id)
+  const itemExpensesTotal = dealExpenses.reduce((s, e) => s + (e.amount || 0), 0)
 
+  // Cash In: actual payments received (deposits + milestones + finals)
+  const cashIn = incomeTx.reduce((s, t) => s + t.amount, 0)
+  
+  // Cash Out: expenses directly logged in transactions + task/deal expense items
+  const txExpenses = expenseTx.reduce((s, t) => s + t.amount, 0)
+  const totalExpenses = (deal.expenses || 0) + txExpenses + itemExpensesTotal
+
+  // Contract Price and Sub-price Left to Pay
   const totalPrice = deal.total_value || 0
   const leftToPay = Math.max(0, totalPrice - cashIn)
   const pctPaid = totalPrice > 0 ? Math.min(100, Math.round((cashIn / totalPrice) * 100)) : (cashIn > 0 ? 100 : 0)
-  
+
+  // Realized Profit (Actual Cash In Drawer right now after expenses)
+  const realizedNetProfit = cashIn - totalExpenses
+  const realizedMargin = cashIn > 0 ? Math.round((realizedNetProfit / cashIn) * 100) : 0
+
+  // Projected Profit (Total profit when 100% of deal price is collected)
+  const projectedNetProfit = totalPrice - totalExpenses
+  const projectedMargin = totalPrice > 0 ? Math.round((projectedNetProfit / totalPrice) * 100) : 0
+
+  // Categorization status
   const isFullyPaid = totalPrice > 0 ? cashIn >= totalPrice : (cashIn > 0 && !!deal.final_paid_at)
-  const hasDepositPaid = cashIn > 0 && !isFullyPaid
+  const hasDepositPaid = (totalPrice > 0 && cashIn > 0 && cashIn < totalPrice) || (!!deal.deposit_paid_at && leftToPay > 0)
   const isAwaitingDeposit = cashIn === 0 && !deal.deposit_paid_at
 
   const proofCount = incomeTx.filter((t) => !!t.proof_url).length
@@ -117,13 +152,13 @@ export function calcDealFinancials(deal: Deal | DealWithRelations, transactions:
   const doneTasks = dealTasks.filter((t) => t.status === 'done').length
   const isWorkFinished = (totalTasks > 0 && doneTasks === totalTasks) || ('submission' in deal && deal.submission?.status === 'finished')
 
-
   return {
     cashIn,
-    cashOut,
     totalExpenses,
-    netProfit,
-    margin,
+    realizedNetProfit,
+    realizedMargin,
+    projectedNetProfit,
+    projectedMargin,
     totalPrice,
     leftToPay,
     pctPaid,
@@ -135,6 +170,8 @@ export function calcDealFinancials(deal: Deal | DealWithRelations, transactions:
     dealTx,
     incomeTx,
     expenseTx,
+    dealExpenses,
+    itemExpensesTotal,
     totalTasks,
     doneTasks,
     isWorkFinished,
@@ -146,10 +183,18 @@ function dealWithTasks(deal: any): Task[] {
   return Array.isArray(deal.tasks) ? deal.tasks : []
 }
 
-export function calcStudioTotals(deals: Deal[], allTransactions: Transaction[], tasksMap: Record<string, Task[]> = {}) {
+export function calcStudioTotals(
+  deals: Deal[],
+  allTransactions: Transaction[],
+  tasksMap: Record<string, Task[]> = {},
+  allExpenses: ExpenseItem[] = []
+) {
   const cashIn = allTransactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const expenses = allTransactions.filter((t) => t.type === 'expense').reduce((s, t) => s + (t.amount || 0), 0)
-  const netProfit = cashIn - expenses
+  const txExpenses = allTransactions.filter((t) => t.type === 'expense').reduce((s, t) => s + (t.amount || 0), 0)
+  const itemExpenses = allExpenses.reduce((s, e) => s + (e.amount || 0), 0)
+  
+  const totalExpenses = txExpenses + itemExpenses
+  const netProfit = cashIn - totalExpenses
   const margin = cashIn > 0 ? Math.round((netProfit / cashIn) * 100) : 0
 
   const activeDeals = deals.filter((d) => d.submission_id)
@@ -163,7 +208,7 @@ export function calcStudioTotals(deals: Deal[], allTransactions: Transaction[], 
   let completedAndPaidCount = 0
 
   for (const deal of activeDeals) {
-    const fin = calcDealFinancials(deal, allTransactions, tasksMap[deal.id])
+    const fin = calcDealFinancials(deal, allTransactions, tasksMap[deal.id], allExpenses)
     totalLeftToPay += fin.leftToPay
     if (fin.hasDepositPaid) {
       totalDepositsCollected += fin.cashIn
@@ -181,7 +226,7 @@ export function calcStudioTotals(deals: Deal[], allTransactions: Transaction[], 
 
   return {
     cashIn,
-    expenses,
+    expenses: totalExpenses,
     netProfit,
     margin,
     billed,
@@ -230,4 +275,3 @@ export function extractFinancialsFromSubmission(sub: any) {
   const finalVal = total - deposit
   return { total, deposit, finalVal }
 }
-

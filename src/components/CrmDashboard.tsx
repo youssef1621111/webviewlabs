@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Deal, Transaction, DealWithRelations, Task, DealFilterTab } from '../lib/crm'
+import type { Deal, Transaction, DealWithRelations, Task, DealFilterTab, ExpenseItem, ExpenseFrequency, ExpenseCategory } from '../lib/crm'
 import { calcStudioTotals, calcDealFinancials, fmt, DEFAULT_TASKS, extractFinancialsFromSubmission } from '../lib/crm'
 import { AiAnalyst } from './AiAnalyst'
 import type { Locale } from '../types'
@@ -87,14 +87,18 @@ export function CrmDashboard({ locale }: Props) {
   const [deals, setDeals] = useState<DealWithRelations[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [tasksMap, setTasksMap] = useState<Record<string, Task[]>>({})
+  const [expensesList, setExpensesList] = useState<ExpenseItem[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'overview' | 'deals' | 'cash' | 'deal' | 'ai'>('overview')
   const [activeDealId, setActiveDealId] = useState<string | null>(null)
-  const [dealTab, setDealTab] = useState<'financials' | 'tasks'>('tasks')
+  const [dealTab, setDealTab] = useState<'tasks' | 'expenses' | 'financials'>('tasks')
   const [dealFilter, setDealFilter] = useState<DealFilterTab>('all')
 
   // Payment Recording Modal
   const [paymentModalDeal, setPaymentModalDeal] = useState<DealWithRelations | null>(null)
+
+  // Expense Add Modal
+  const [expenseModalDeal, setExpenseModalDeal] = useState<DealWithRelations | null>(null)
   
   // Proof Lightbox
   const [viewingProof, setViewingProof] = useState<{ url: string; title: string; amount?: number; date?: string; source?: string } | null>(null)
@@ -121,16 +125,19 @@ export function CrmDashboard({ locale }: Props) {
   async function load() {
     setLoading(true)
     try {
-      const [dealsDataRaw, txDataRaw, subsDataRaw, allTasks] = await Promise.all([
+      const [dealsDataRaw, txDataRaw, subsDataRaw, allTasks, allExps] = await Promise.all([
         dbGet('deals?select=*&order=created_at.desc'),
         dbGet('transactions?select=*&order=paid_at.desc'),
         dbGet('contact_submissions?select=*&order=id.desc'),
         dbGet('tasks?select=*&order=sort_order.asc'),
+        dbGet('expenses?select=*&order=paid_at.desc'),
       ])
 
       const dealsData: Deal[] = Array.isArray(dealsDataRaw) ? dealsDataRaw : []
       const subsData: any[] = Array.isArray(subsDataRaw) ? subsDataRaw : []
       const txData: Transaction[] = Array.isArray(txDataRaw) ? txDataRaw : []
+      const expData: ExpenseItem[] = Array.isArray(allExps) ? allExps : []
+      setExpensesList(expData)
 
       // 1. Auto-sync missing deals from submissions and auto-extract financials
       const dealBySubId = new Map<number, Deal>(dealsData.map((d) => [d.submission_id, d]))
@@ -184,6 +191,7 @@ export function CrmDashboard({ locale }: Props) {
         ...d,
         submission: subMap[d.submission_id],
         tasks: tMap[d.id] || [],
+        expensesList: expData.filter((e) => e.deal_id === d.id),
       }))
       setDeals(enriched)
       setTransactions(txData)
@@ -192,10 +200,9 @@ export function CrmDashboard({ locale }: Props) {
     }
   }
 
-
   useEffect(() => { load() }, [])
 
-  const totals = calcStudioTotals(deals, transactions, tasksMap)
+  const totals = calcStudioTotals(deals, transactions, tasksMap, expensesList)
   const activeDeal = deals.find((d) => d.id === activeDealId) || null
 
   async function addTransaction() {
@@ -224,9 +231,16 @@ export function CrmDashboard({ locale }: Props) {
     load()
   }
 
-  // Segmented deals filtering
+  async function deleteExpenseItem(id: string) {
+    if (!confirm('Delete this expense item?')) return
+    await dbDelete('expenses', id)
+    showToast('Expense removed')
+    load()
+  }
+
+  // Segmented deals filtering with strict business categorization
   const filteredDeals = deals.filter((deal) => {
-    const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id])
+    const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id], expensesList)
     if (dealFilter === 'deposit_paid') return fin.hasDepositPaid
     if (dealFilter === 'awaiting_deposit') return fin.isAwaitingDeposit
     if (dealFilter === 'paid_in_full') return fin.isFullyPaid
@@ -309,7 +323,7 @@ export function CrmDashboard({ locale }: Props) {
           <div>
             <span className="eyebrow">WV / Studio CRM & Cash Drawer</span>
             <h1 style={{ fontSize: 'clamp(28px,4vw,46px)', marginTop: '8px' }}>
-              {isAr ? 'إدارة العملاء والخزينة والمستحقات' : 'Client Ledger & Receivables'}
+              {isAr ? 'إدارة المستحقات والخزينة وتكاليف المشاريع' : 'Studio Cash, Receivables & Costs'}
             </h1>
           </div>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
@@ -362,7 +376,7 @@ export function CrmDashboard({ locale }: Props) {
 
         {/* ═══════════════════ AI ANALYST TAB ═══════════════════ */}
         {view === 'ai' && (
-          <AiAnalyst deals={deals} transactions={transactions} tasksMap={tasksMap} locale={locale} />
+          <AiAnalyst deals={deals} transactions={transactions} tasksMap={tasksMap} expenseItems={expensesList} locale={locale} />
         )}
 
         {/* ═══════════════════ OVERVIEW TAB ═══════════════════ */}
@@ -377,15 +391,15 @@ export function CrmDashboard({ locale }: Props) {
                 marginBottom: '36px',
               }}
             >
-              <SummaryCard label="💰 Cash In Drawer" value={fmt(totals.cashIn)} color="#25D366" sub="All received income" badge="In Drawer" />
+              <SummaryCard label="💰 Cash In Drawer" value={fmt(totals.cashIn)} color="#25D366" sub="All received payments" badge="Realized" />
               <SummaryCard label="⏳ Left to Pay (Receivables)" value={fmt(totals.totalLeftToPay)} color="#f59e0b" sub="Uncollected balances" badge="Due" />
               <SummaryCard label="📊 Total Contracted" value={fmt(totals.billed)} color="#171717" sub="All deal full prices" />
-              <SummaryCard label="💸 Expenses Logged" value={fmt(totals.expenses)} color="#b52d20" sub="Total studio costs" />
+              <SummaryCard label="💸 Costs & Expenses" value={fmt(totals.expenses)} color="#b52d20" sub="Hosting, tools & tasks" />
               <SummaryCard
-                label="🏦 Net Profit"
+                label="🏦 Net Realized Profit"
                 value={fmt(totals.netProfit)}
                 color={totals.netProfit >= 0 ? '#8b5cf6' : '#b52d20'}
-                sub={`${totals.margin}% net margin`}
+                sub={`${totals.margin}% realized margin`}
               />
             </div>
 
@@ -451,7 +465,7 @@ export function CrmDashboard({ locale }: Props) {
                 </div>
               )}
               {deals.map((deal) => {
-                const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id])
+                const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id], expensesList)
                 return (
                   <DealCardItem
                     key={deal.id}
@@ -459,6 +473,7 @@ export function CrmDashboard({ locale }: Props) {
                     fin={fin}
                     onOpen={() => { setActiveDealId(deal.id); setView('deal') }}
                     onReceivePayment={() => setPaymentModalDeal(deal)}
+                    onAddExpense={() => setExpenseModalDeal(deal)}
                     onViewProof={(proof) => setViewingProof(proof)}
                   />
                 )
@@ -506,7 +521,7 @@ export function CrmDashboard({ locale }: Props) {
                 </div>
               )}
               {filteredDeals.map((deal) => {
-                const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id])
+                const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id], expensesList)
                 return (
                   <DealCardItem
                     key={deal.id}
@@ -514,6 +529,7 @@ export function CrmDashboard({ locale }: Props) {
                     fin={fin}
                     onOpen={() => { setActiveDealId(deal.id); setView('deal') }}
                     onReceivePayment={() => setPaymentModalDeal(deal)}
+                    onAddExpense={() => setExpenseModalDeal(deal)}
                     onViewProof={(proof) => setViewingProof(proof)}
                   />
                 )
@@ -527,6 +543,7 @@ export function CrmDashboard({ locale }: Props) {
           <CashLedgerView
             deals={deals}
             transactions={transactions}
+            expensesList={expensesList}
             isAr={isAr}
             txForm={txForm}
             setTxForm={setTxForm}
@@ -535,16 +552,18 @@ export function CrmDashboard({ locale }: Props) {
             txLoading={txLoading}
             onAddTransaction={addTransaction}
             onDeleteTransaction={deleteTransaction}
+            onDeleteExpense={deleteExpenseItem}
             onViewProof={(proof) => setViewingProof(proof)}
           />
         )}
 
-        {/* ═══════════════════ SINGLE DEAL VIEW (Tasks & Financials) ═══════════════════ */}
+        {/* ═══════════════════ SINGLE DEAL VIEW (Tasks & Financials & Expenses) ═══════════════════ */}
         {view === 'deal' && activeDeal && (
           <DealDetailView
             deal={activeDeal}
             transactions={transactions.filter((t) => t.deal_id === activeDeal.id)}
             tasks={tasksMap[activeDeal.id] || []}
+            expenses={expensesList.filter((e) => e.deal_id === activeDeal.id)}
             isAr={isAr}
             tab={dealTab}
             setTab={setDealTab}
@@ -552,6 +571,8 @@ export function CrmDashboard({ locale }: Props) {
             onReload={load}
             showToast={showToast}
             onReceivePayment={() => setPaymentModalDeal(activeDeal)}
+            onAddExpense={() => setExpenseModalDeal(activeDeal)}
+            onDeleteExpense={deleteExpenseItem}
             onViewProof={(proof) => setViewingProof(proof)}
           />
         )}
@@ -560,11 +581,25 @@ export function CrmDashboard({ locale }: Props) {
         {paymentModalDeal && (
           <ReceivePaymentModal
             deal={paymentModalDeal}
-            currentFin={calcDealFinancials(paymentModalDeal, transactions, tasksMap[paymentModalDeal.id])}
+            currentFin={calcDealFinancials(paymentModalDeal, transactions, tasksMap[paymentModalDeal.id], expensesList)}
             onClose={() => setPaymentModalDeal(null)}
             onSuccess={() => {
               setPaymentModalDeal(null)
               showToast('✓ Payment & proof screenshot logged successfully!')
+              load()
+            }}
+          />
+        )}
+
+        {/* ═══════════════════ ADD EXPENSE / COST MODAL ═══════════════════ */}
+        {expenseModalDeal && (
+          <AddExpenseModal
+            deal={expenseModalDeal}
+            tasks={tasksMap[expenseModalDeal.id] || []}
+            onClose={() => setExpenseModalDeal(null)}
+            onSuccess={() => {
+              setExpenseModalDeal(null)
+              showToast('✓ Expense logged & subtracted from net profit!')
               load()
             }}
           />
@@ -631,15 +666,16 @@ export function CrmDashboard({ locale }: Props) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Deal Card Item with Full Price, Left to Pay, Progress, Proof Thumbnails
+ * Deal Card Item with Full Price, Left to Pay, Progress, Proof Thumbnails, Expenses
  */
 function DealCardItem({
-  deal, fin, onOpen, onReceivePayment, onViewProof
+  deal, fin, onOpen, onReceivePayment, onAddExpense, onViewProof
 }: {
   deal: DealWithRelations
   fin: ReturnType<typeof calcDealFinancials>
   onOpen: () => void
   onReceivePayment: () => void
+  onAddExpense: () => void
   onViewProof: (proof: any) => void
 }) {
   return (
@@ -689,6 +725,15 @@ function DealCardItem({
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
+            onClick={onAddExpense}
+            style={{
+              padding: '6px 12px', font: '700 11px "DM Mono",monospace', cursor: 'pointer',
+              background: '#fff', color: '#b52d20', border: '1px solid #b52d20',
+            }}
+          >
+            💸 + Log Expense
+          </button>
+          <button
             onClick={onReceivePayment}
             style={{
               padding: '6px 14px', font: '700 11px "DM Mono",monospace', cursor: 'pointer',
@@ -696,7 +741,7 @@ function DealCardItem({
               display: 'flex', alignItems: 'center', gap: '6px',
             }}
           >
-            📸 Receive Payment / Deposit
+            📸 Receive Payment
           </button>
           <button
             onClick={onOpen}
@@ -727,7 +772,7 @@ function DealCardItem({
         </div>
 
         <div>
-          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>💰 Total Paid ({fin.pctPaid}%)</div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>💰 Collected ({fin.pctPaid}%)</div>
           <div style={{ font: '700 18px "DM Mono",monospace', color: '#25D366' }}>{fmt(fin.cashIn)}</div>
         </div>
 
@@ -739,40 +784,249 @@ function DealCardItem({
         </div>
 
         <div>
-          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>💸 Expenses</div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>💸 Costs & Expenses</div>
           <div style={{ font: '700 16px "DM Mono",monospace', color: '#b52d20' }}>{fmt(fin.totalExpenses)}</div>
         </div>
 
         <div>
-          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>🏦 Net Profit</div>
-          <div style={{ font: '700 18px "DM Mono",monospace', color: fin.netProfit >= 0 ? '#8b5cf6' : '#b52d20' }}>
-            {fmt(fin.netProfit)} <span style={{ fontSize: '10px', opacity: 0.7 }}>({fin.margin}%)</span>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>🏦 Net Profit (Today)</div>
+          <div style={{ font: '700 18px "DM Mono",monospace', color: fin.realizedNetProfit >= 0 ? '#8b5cf6' : '#b52d20' }}>
+            {fmt(fin.realizedNetProfit)} <span style={{ fontSize: '10px', opacity: 0.7 }}>({fin.realizedMargin}%)</span>
           </div>
         </div>
       </div>
 
-      {/* Proof Screenshots Thumbnails Row */}
-      {fin.proofs.length > 0 && (
-        <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <span style={{ font: '700 10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
-            📸 Verified Proofs ({fin.proofs.length}):
+      {/* Proof Screenshots & Expenses Summary */}
+      <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+        {fin.proofs.length > 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span style={{ font: '700 10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+              📸 Proofs ({fin.proofs.length}):
+            </span>
+            {fin.proofs.map((p, idx) => (
+              <button
+                key={idx}
+                onClick={() => onViewProof({ url: p.url, title: p.label, amount: p.amount, date: p.date, source: p.source })}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  padding: '3px 8px', background: '#fff', border: '1px solid #c5c0b5',
+                  cursor: 'pointer', font: '11px "DM Mono",monospace', color: '#171717',
+                }}
+              >
+                <img src={p.url} alt="Receipt thumbnail" style={{ width: 18, height: 18, objectFit: 'cover' }} />
+                <span>{p.label} ({fmt(p.amount)}) ↗</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span style={{ font: '11px "DM Mono",monospace', color: '#888' }}>No receipts attached</span>
+        )}
+
+        {fin.dealExpenses.length > 0 && (
+          <span style={{ font: '11px "DM Mono",monospace', color: '#b52d20' }}>
+            💸 {fin.dealExpenses.length} cost items logged ({fmt(fin.itemExpensesTotal)})
           </span>
-          {fin.proofs.map((p, idx) => (
-            <button
-              key={idx}
-              onClick={() => onViewProof({ url: p.url, title: p.label, amount: p.amount, date: p.date, source: p.source })}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                padding: '3px 8px', background: '#fff', border: '1px solid #c5c0b5',
-                cursor: 'pointer', font: '11px "DM Mono",monospace', color: '#171717',
-              }}
-            >
-              <img src={p.url} alt="Receipt thumbnail" style={{ width: 18, height: 18, objectFit: 'cover' }} />
-              <span>{p.label} ({fmt(p.amount)}) ↗</span>
-            </button>
-          ))}
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Modal to Add Task/Project Expense Item (Hosting, Domain, Contractor, Tools, etc.)
+ */
+function AddExpenseModal({
+  deal, tasks, onClose, onSuccess
+}: {
+  deal: DealWithRelations
+  tasks: Task[]
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const [title, setTitle] = useState('')
+  const [amount, setAmount] = useState('')
+  const [frequency, setFrequency] = useState<ExpenseFrequency>('one_time')
+  const [category, setCategory] = useState<ExpenseCategory>('hosting')
+  const [taskId, setTaskId] = useState<string>('')
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().split('T')[0])
+  const [saving, setSaving] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const num = parseFloat(amount)
+    if (!title || isNaN(num) || num <= 0) return
+
+    setSaving(true)
+    try {
+      // 1. Insert to expenses table
+      await dbPost('expenses', {
+        deal_id: deal.id,
+        task_id: taskId || null,
+        title,
+        amount: num,
+        frequency,
+        category,
+        paid_at: paidAt,
+      })
+
+      // 2. Also log to transactions table as an expense
+      await dbPost('transactions', {
+        deal_id: deal.id,
+        type: 'expense',
+        label: `Expense: ${title} (${frequency})`,
+        amount: num,
+        paid_at: paidAt,
+        source: 'Studio Expense',
+      })
+
+      onSuccess()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 10000,
+        background: 'rgba(0,0,0,0.75)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '20px',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          border: '3px solid #171717',
+          boxShadow: '10px 10px 0 #b52d20',
+          maxWidth: '520px',
+          width: '100%',
+          padding: '26px',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+          <div>
+            <span className="eyebrow">Cost & Expense Logger</span>
+            <h2 style={{ fontSize: '20px', margin: '4px 0 0' }}>
+              Log Cost for {deal.submission?.company}
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: '#171717', color: '#fff', border: 'none', padding: '6px 12px', font: '700 12px "DM Mono",monospace', cursor: 'pointer' }}
+          >
+            ✕
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+              Expense Title / Item *
+            </span>
+            <input
+              type="text"
+              required
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Vercel Pro Hosting, Domain, Freelancer"
+              style={inputStyle}
+            />
+          </label>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+                Cost Amount ($ USD) *
+              </span>
+              <input
+                type="number"
+                step="0.01"
+                required
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="20.00"
+                style={{ ...inputStyle, fontWeight: 'bold' }}
+              />
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+                Billing Frequency
+              </span>
+              <select value={frequency} onChange={(e) => setFrequency(e.target.value as any)} style={inputStyle}>
+                <option value="one_time">⚡ One-time</option>
+                <option value="monthly">📅 Monthly</option>
+                <option value="yearly">🗓️ Yearly</option>
+                <option value="weekly">📆 Weekly</option>
+                <option value="daily">⏱️ Daily</option>
+              </select>
+            </label>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+                Category
+              </span>
+              <select value={category} onChange={(e) => setCategory(e.target.value as any)} style={inputStyle}>
+                <option value="hosting">☁️ Hosting & Cloud</option>
+                <option value="domain">🌐 Domain & DNS</option>
+                <option value="tools">🛠️ Software / APIs</option>
+                <option value="contractor">👥 Contractor / Freelancer</option>
+                <option value="marketing">📣 Marketing</option>
+                <option value="legal">⚖️ Legal & Taxes</option>
+                <option value="other">📦 Other Overhead</option>
+              </select>
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+                Date Incurred
+              </span>
+              <input
+                type="date"
+                required
+                value={paidAt}
+                onChange={(e) => setPaidAt(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+          </div>
+
+          {tasks.length > 0 && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+                Link to Task (Optional)
+              </span>
+              <select value={taskId} onChange={(e) => setTaskId(e.target.value)} style={inputStyle}>
+                <option value="">— General Deal Cost —</option>
+                {tasks.map((t) => (
+                  <option key={t.id} value={t.id}>{t.title}</option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <button
+            type="submit"
+            disabled={saving}
+            style={{
+              marginTop: '10px',
+              padding: '12px',
+              font: '700 12px "DM Mono",monospace',
+              background: '#b52d20',
+              color: '#fff',
+              border: 'none',
+              cursor: saving ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {saving ? 'Saving…' : `✓ Deduct ${amount ? `$${amount}` : 'Expense'} from Deal Profit`}
+          </button>
+        </form>
+      </div>
     </div>
   )
 }
@@ -1105,24 +1359,27 @@ function ReceivePaymentModal({
 }
 
 /**
- * Deal Detail View with Full Price Input directly in Tasks & Financials
+ * Deal Detail View with Full Price Input, Deliverables Checklist, and Expense Manager
  */
 function DealDetailView({
-  deal, transactions, tasks, isAr, tab, setTab, onBack, onReload, showToast, onReceivePayment, onViewProof
+  deal, transactions, tasks, expenses, isAr, tab, setTab, onBack, onReload, showToast, onReceivePayment, onAddExpense, onDeleteExpense, onViewProof
 }: {
   deal: DealWithRelations
   transactions: Transaction[]
   tasks: Task[]
+  expenses: ExpenseItem[]
   isAr: boolean
-  tab: 'financials' | 'tasks'
-  setTab: (t: 'financials' | 'tasks') => void
+  tab: 'tasks' | 'expenses' | 'financials'
+  setTab: (t: 'tasks' | 'expenses' | 'financials') => void
   onBack: () => void
   onReload: () => void
   showToast: (m: string) => void
   onReceivePayment: () => void
+  onAddExpense: () => void
+  onDeleteExpense: (id: string) => void
   onViewProof: (proof: any) => void
 }) {
-  const fin = calcDealFinancials(deal, transactions, tasks)
+  const fin = calcDealFinancials(deal, transactions, tasks, expenses)
   const [dealTasks, setDealTasks] = useState<Task[]>(tasks)
   const [taskLoading, setTaskLoading] = useState(false)
   const [isSavingPrice, setIsSavingPrice] = useState(false)
@@ -1235,16 +1492,27 @@ function DealDetailView({
           </div>
         </div>
 
-        <button
-          onClick={onReceivePayment}
-          style={{
-            padding: '10px 18px', font: '700 12px "DM Mono",monospace',
-            background: '#25D366', color: '#fff', border: 'none', cursor: 'pointer',
-            boxShadow: '3px 3px 0 #16a34a', display: 'flex', alignItems: 'center', gap: '6px',
-          }}
-        >
-          📸 + Receive Payment / Deposit
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={onAddExpense}
+            style={{
+              padding: '10px 14px', font: '700 11px "DM Mono",monospace',
+              background: '#fff', color: '#b52d20', border: '1px solid #b52d20', cursor: 'pointer',
+            }}
+          >
+            💸 + Log Expense
+          </button>
+          <button
+            onClick={onReceivePayment}
+            style={{
+              padding: '10px 18px', font: '700 12px "DM Mono",monospace',
+              background: '#25D366', color: '#fff', border: 'none', cursor: 'pointer',
+              boxShadow: '3px 3px 0 #16a34a', display: 'flex', alignItems: 'center', gap: '6px',
+            }}
+          >
+            📸 + Receive Payment / Deposit
+          </button>
+        </div>
       </div>
 
       {/* ─── LIVE PRICE & SUB-PRICE LEFT TO PAY BANNER ─── */}
@@ -1256,7 +1524,7 @@ function DealDetailView({
           padding: '20px 24px',
           marginBottom: '28px',
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
           gap: '16px',
           alignItems: 'center',
         }}
@@ -1290,7 +1558,7 @@ function DealDetailView({
         {/* Total Paid So Far */}
         <div>
           <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
-            💰 Total Paid So Far
+            💰 Total Collected
           </div>
           <div style={{ font: '700 22px "DM Mono",monospace', color: '#25D366' }}>
             {fmt(fin.cashIn)} <span style={{ fontSize: '12px', opacity: 0.8 }}>({fin.pctPaid}%)</span>
@@ -1307,20 +1575,30 @@ function DealDetailView({
           </div>
         </div>
 
-        {/* Net Profit */}
+        {/* Total Costs */}
         <div>
           <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
-            🏦 Net Studio Profit
+            💸 Costs & Expenses
           </div>
-          <div style={{ font: '700 20px "DM Mono",monospace', color: fin.netProfit >= 0 ? '#8b5cf6' : '#b52d20' }}>
-            {fmt(fin.netProfit)} <span style={{ fontSize: '11px', opacity: 0.7 }}>({fin.margin}%)</span>
+          <div style={{ font: '700 20px "DM Mono",monospace', color: '#b52d20' }}>
+            {fmt(fin.totalExpenses)}
+          </div>
+        </div>
+
+        {/* Realized Profit (Today) */}
+        <div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
+            🏦 Realized Profit (Today)
+          </div>
+          <div style={{ font: '700 20px "DM Mono",monospace', color: fin.realizedNetProfit >= 0 ? '#8b5cf6' : '#b52d20' }}>
+            {fmt(fin.realizedNetProfit)} <span style={{ fontSize: '11px', opacity: 0.7 }}>({fin.realizedMargin}%)</span>
           </div>
         </div>
       </div>
 
       {/* Tab Nav */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '24px' }}>
-        {(['tasks', 'financials'] as const).map((t) => (
+        {(['tasks', 'expenses', 'financials'] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -1330,7 +1608,7 @@ function DealDetailView({
               border: '1px solid #171717', cursor: 'pointer',
             }}
           >
-            {t === 'tasks' ? `✅ Deliverables & Tasks (${doneTasks}/${dealTasks.length})` : '💰 Full Financial Ledger'}
+            {t === 'tasks' ? `✅ Deliverables (${doneTasks}/${dealTasks.length})` : t === 'expenses' ? `💸 Project Expenses (${expenses.length})` : '💰 Full Financial Ledger'}
           </button>
         ))}
       </div>
@@ -1412,6 +1690,68 @@ function DealDetailView({
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* ─── EXPENSES TAB (Task & Hosting Costs) ─── */}
+      {tab === 'expenses' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ margin: 0, fontSize: '16px' }}>
+              Project Costs & Task Expenses ({expenses.length} items · Total: <span style={{ color: '#b52d20' }}>{fmt(fin.itemExpensesTotal)}</span>)
+            </h3>
+            <button
+              onClick={onAddExpense}
+              style={{ padding: '8px 16px', background: '#b52d20', color: '#fff', border: 'none', font: '700 11px "DM Mono",monospace', cursor: 'pointer' }}
+            >
+              + Log New Cost Item
+            </button>
+          </div>
+
+          {expenses.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', background: '#f8f6f2', border: '1px solid #c5c0b5' }}>
+              <p style={{ font: '13px "DM Mono",monospace', color: '#5d5a54', margin: 0 }}>
+                No task or project expenses logged yet for this deal.
+              </p>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ background: '#171717', color: '#fff' }}>
+                    {['Date', 'Item / Title', 'Category', 'Frequency', 'Amount', ''].map((h) => (
+                      <th key={h} style={{ padding: '10px 14px', textAlign: 'left', font: '700 10px "DM Mono",monospace', textTransform: 'uppercase' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {expenses.map((exp, i) => (
+                    <tr key={exp.id} style={{ background: i % 2 === 0 ? '#fff' : '#fcfbfa', borderBottom: '1px solid #e8e3d9' }}>
+                      <td style={{ padding: '10px 14px', font: '11px "DM Mono",monospace' }}>{new Date(exp.paid_at).toLocaleDateString()}</td>
+                      <td style={{ padding: '10px 14px', fontWeight: 'bold' }}>{exp.title}</td>
+                      <td style={{ padding: '10px 14px', font: '11px "DM Mono",monospace' }}>{exp.category}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{ padding: '2px 8px', font: '700 10px "DM Mono",monospace', background: '#fee2e2', color: '#991b1b' }}>
+                          {exp.frequency}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 14px', font: '700 13px "DM Mono",monospace', color: '#b52d20' }}>
+                        -{fmt(exp.amount)}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <button
+                          onClick={() => onDeleteExpense(exp.id)}
+                          style={{ background: 'none', border: '1px solid #fca5a5', color: '#b52d20', padding: '2px 6px', font: '10px "DM Mono",monospace', cursor: 'pointer' }}
+                        >
+                          🗑️
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -1508,13 +1848,14 @@ function DealDetailView({
 }
 
 /**
- * Cash Ledger Table View with Screenshot Proof Upload
+ * Cash Ledger Table View with Screenshot Proof Upload & Expenses
  */
 function CashLedgerView({
-  deals, transactions, isAr, txForm, setTxForm, txProofPreview, setTxProofPreview, txLoading, onAddTransaction, onDeleteTransaction, onViewProof
+  deals, transactions, expensesList, isAr, txForm, setTxForm, txProofPreview, setTxProofPreview, txLoading, onAddTransaction, onDeleteTransaction, onDeleteExpense, onViewProof
 }: {
   deals: DealWithRelations[]
   transactions: Transaction[]
+  expensesList: ExpenseItem[]
   isAr: boolean
   txForm: any
   setTxForm: any
@@ -1523,6 +1864,7 @@ function CashLedgerView({
   txLoading: boolean
   onAddTransaction: () => void
   onDeleteTransaction: (id: string) => void
+  onDeleteExpense: (id: string) => void
   onViewProof: (proof: any) => void
 }) {
   const totalIn = transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
