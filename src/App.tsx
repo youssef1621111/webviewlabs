@@ -63,8 +63,8 @@ function PeoplePage({ copy }: { copy: Copy }) {
   return <section className="studio-page section-pad"><div className="content-width"><PageMast eyebrow={copy.people.eyebrow} title={copy.people.title} body={copy.people.intro} /><Founders copy={copy} /></div></section>
 }
 
-function ContactPage({ copy }: { copy: Copy }) {
-  return <section className="contact-section contact-page section-pad"><div className="content-width contact-grid"><div className="contact-intro"><span className="eyebrow eyebrow-light">{copy.contact.eyebrow}</span><h1>{copy.contact.title}</h1><p>{copy.contact.body}</p><div className="contact-stamp"><span>WV</span><small>working<br />edition</small></div></div><ContactForm copy={copy} /></div></section>
+function ContactPage({ copy, locale }: { copy: Copy; locale: Locale }) {
+  return <section className="contact-section contact-page section-pad"><div className="content-width contact-grid"><div className="contact-intro"><span className="eyebrow eyebrow-light">{copy.contact.eyebrow}</span><h1>{copy.contact.title}</h1><p>{copy.contact.body}</p><div className="contact-social"><span className="contact-social-label">{locale === 'ar' ? 'تابعنا على وسائل التواصل' : 'Follow our studio'}</span><div className="contact-social-links"><a href="https://www.instagram.com/webviewlabs/" target="_blank" rel="noopener noreferrer" className="contact-social-btn">Instagram <span aria-hidden="true">↗</span></a><a href="https://www.linkedin.com/company/webviewlabs-studio/" target="_blank" rel="noopener noreferrer" className="contact-social-btn">LinkedIn <span aria-hidden="true">↗</span></a><a href="https://www.facebook.com/profile.php?id=61593463393675" target="_blank" rel="noopener noreferrer" className="contact-social-btn">Facebook <span aria-hidden="true">↗</span></a></div></div><div className="contact-stamp"><span>WV</span><small>working<br />edition</small></div></div><ContactForm copy={copy} /></div></section>
 }
 
 function App() {
@@ -147,12 +147,32 @@ function App() {
       {page === 'projects' && <ProjectsPage copy={copy} locale={locale} />}
       {page === 'approach' && <ApproachPage copy={copy} locale={locale} />}
       {page === 'people' && <PeoplePage copy={copy} />}
-      {page === 'contact' && <ContactPage copy={copy} />}
+      {page === 'contact' && <ContactPage copy={copy} locale={locale} />}
       {page === 'admin' && <AdminPortal locale={locale} />}
     </main>
-    <footer className="site-footer"><div className="content-width footer-inner"><div><a className="wordmark footer-wordmark" href={pagePath(locale, 'home')}><span className="wordmark-mark">wv</span><span>webviewlabs</span></a><p>{copy.footer.statement}</p></div><div className="footer-meta"><span>{copy.footer.legal}</span><span>Cairo · 30°03′N</span></div></div></footer>
+    <footer className="site-footer">
+      <div className="content-width footer-inner">
+        <div className="footer-brand">
+          <a className="wordmark footer-wordmark" href={pagePath(locale, 'home')}>
+            <span className="wordmark-mark">wv</span>
+            <span>webviewlabs</span>
+          </a>
+          <p>{copy.footer.statement}</p>
+        </div>
+        <div className="footer-social" aria-label="Social media links">
+          <a href="https://www.instagram.com/webviewlabs/" target="_blank" rel="noopener noreferrer" className="footer-social-link">Instagram <span aria-hidden="true">↗</span></a>
+          <a href="https://www.linkedin.com/company/webviewlabs-studio/" target="_blank" rel="noopener noreferrer" className="footer-social-link">LinkedIn <span aria-hidden="true">↗</span></a>
+          <a href="https://www.facebook.com/profile.php?id=61593463393675" target="_blank" rel="noopener noreferrer" className="footer-social-link">Facebook <span aria-hidden="true">↗</span></a>
+        </div>
+        <div className="footer-meta">
+          <span>{copy.footer.legal}</span>
+          <span>Cairo · 30°03′N</span>
+        </div>
+      </div>
+    </footer>
     <Analytics />
   </div>
 }
 
 export default App
+

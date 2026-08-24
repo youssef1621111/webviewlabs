@@ -98,7 +98,12 @@ export function updateSeo(locale: Locale, page: PageKey) {
           { '@type': 'Person', name: 'Youssef Mohamed', jobTitle: 'CEO & Co-founder · Software Engineer · AI Engineer', url: 'https://www.linkedin.com/in/youssef-mohamed-53506127b/' },
           { '@type': 'Person', name: 'Bejimy Milad', jobTitle: 'Co-founder & CTO · Full-stack Developer & Engineer' },
         ],
-        sameAs: ['https://www.linkedin.com/in/youssef-mohamed-53506127b/'],
+        sameAs: [
+          'https://www.instagram.com/webviewlabs/',
+          'https://www.linkedin.com/company/webviewlabs-studio/',
+          'https://www.facebook.com/profile.php?id=61593463393675',
+          'https://www.linkedin.com/in/youssef-mohamed-53506127b/',
+        ],
       },
       {
         '@type': 'WebSite',
