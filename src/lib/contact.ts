@@ -45,17 +45,18 @@ export async function submitContact(payload: ContactPayload) {
     throw error
   }
 
-
-  try {
-    await supabase.functions.invoke('contact-notify', {
+  // Fire and forget background notification — never block user success
+  supabase.functions
+    .invoke('contact-notify', {
       body: {
         ...payload,
         phone,
       },
     })
-  } catch (notifyError) {
-    console.warn('Supabase notification dispatch:', notifyError)
-  }
+    .catch((notifyError) => {
+      console.warn('Background notification note:', notifyError)
+    })
 
   return { persisted: true as const }
 }
+
