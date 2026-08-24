@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://webviewlabs.vercel.app/en/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/ar/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/en/about/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/about/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/about/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/ar/about/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/about/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/about/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/en/projects/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/projects/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/projects/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/ar/projects/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/projects/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/projects/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/en/approach/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/approach/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/approach/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/ar/approach/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/approach/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/approach/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/en/people/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/people/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/people/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/ar/people/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/people/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/people/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/en/contact/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/contact/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/contact/" />
+  </url>
+  <url>
+    <loc>https://webviewlabs.vercel.app/ar/contact/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://webviewlabs.vercel.app/en/contact/" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://webviewlabs.vercel.app/ar/contact/" />
+  </url>
+</urlset>

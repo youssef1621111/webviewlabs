@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+
+# Local agent and workspace metadata
+.agents/
+.mcp.json
+graphify-out/
+AGENTS.md
+AGENT_REACH_SETUP.md
+CLAUDE.md
+skills-lock.json
