@@ -11,7 +11,8 @@ export function ContactForm({ copy }: ContactFormProps) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const form = new FormData(event.currentTarget)
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
     if (String(form.get('website') ?? '').trim()) return
     const payload = {
       name: String(form.get('name') ?? '').trim(),
@@ -30,14 +31,16 @@ export function ContactForm({ copy }: ContactFormProps) {
     try {
       const result = await submitContact(payload)
       setStatus(result.persisted ? 'success' : 'fallback')
-      if (result.persisted) event.currentTarget.reset()
+      if (result.persisted && formElement) {
+        formElement.reset()
+      }
     } catch (err) {
       console.error('Contact submit error:', err)
       setErrorMessage(copy.contact.error)
       setStatus('error')
     }
-
   }
+
 
   const message = status === 'success' ? copy.contact.success : status === 'fallback' ? copy.contact.fallbackSuccess : errorMessage
 
