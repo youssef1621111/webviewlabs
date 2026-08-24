@@ -9,6 +9,30 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
+async function requestNvidiaStream(model: string, messages: any[], temperature = 0.7, max_tokens = 4096) {
+  const isNemotron = model.includes("nemotron")
+  const body: any = {
+    model,
+    messages,
+    temperature,
+    top_p: 0.95,
+    max_tokens,
+    stream: true,
+  }
+  if (isNemotron) {
+    body.chat_template_kwargs = { enable_thinking: true }
+  }
+
+  return await fetch(`${NVIDIA_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${NVIDIA_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
@@ -16,37 +40,25 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json()
-    const { messages, model, temperature, top_p, max_tokens, extra_body } = body
+    const { messages, model, temperature, max_tokens } = body
 
-    const targetModel = model || "nvidia/nemotron-3-ultra-550b-a55b"
+    const preferredModel = model || "nvidia/nemotron-3-ultra-550b-a55b"
+    let res = await requestNvidiaStream(preferredModel, messages, temperature, max_tokens)
 
-    const nvidiaRes = await fetch(`${NVIDIA_BASE}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${NVIDIA_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: targetModel,
-        messages,
-        temperature: temperature ?? 0.7,
-        top_p: top_p ?? 0.95,
-        max_tokens: max_tokens ?? 4096,
-        extra_body: extra_body ?? { chat_template_kwargs: { enable_thinking: true } },
-        stream: true,
-      }),
-    })
+    if (!res.ok || res.status === 503) {
+      console.log(`Model ${preferredModel} unavailable (${res.status}), switching to meta/llama-3.3-70b-instruct`)
+      res = await requestNvidiaStream("meta/llama-3.3-70b-instruct", messages, temperature, max_tokens)
+    }
 
-    if (!nvidiaRes.ok) {
-      const errText = await nvidiaRes.text()
+    if (!res.ok) {
+      const errText = await res.text()
       return new Response(JSON.stringify({ error: errText }), {
-        status: nvidiaRes.status,
+        status: res.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
 
-    // Proxy the Server-Sent Events stream directly to client
-    return new Response(nvidiaRes.body, {
+    return new Response(res.body, {
       headers: {
         ...corsHeaders,
         "Content-Type": "text/event-stream",
@@ -55,7 +67,7 @@ Deno.serve(async (req: Request) => {
       },
     })
   } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message || "Unknown error" }), {
+    return new Response(JSON.stringify({ error: err.message || "Proxy error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
