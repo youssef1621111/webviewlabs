@@ -45,18 +45,26 @@ export async function submitContact(payload: ContactPayload) {
     throw error
   }
 
-  // Fire and forget background notification — never block user success
-  supabase.functions
-    .invoke('contact-notify', {
-      body: {
-        ...payload,
-        phone,
-      },
-    })
-    .catch((notifyError) => {
-      console.warn('Background notification note:', notifyError)
-    })
+  // Fire and forget background notification in next tick — never block user success
+  setTimeout(() => {
+    try {
+      supabase?.functions
+        .invoke('contact-notify', {
+          body: {
+            ...payload,
+            phone,
+          },
+        })
+        .catch((notifyError) => {
+          console.warn('Background notification note:', notifyError)
+        })
+    } catch (e) {
+      console.warn('Notification invocation note:', e)
+    }
+  }, 10)
 
   return { persisted: true as const }
 }
+
+
 
