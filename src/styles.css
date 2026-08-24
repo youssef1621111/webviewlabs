@@ -383,3 +383,34 @@ h1 { max-width: 780px; margin-top: 28px; font-size: clamp(56px, 7.15vw, 110px); 
     transition: none !important;
   }
 }
+
+/* Studio Document Suite Print & PDF Styles */
+.print-only {
+  display: none;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #print-area,
+  #print-area * {
+    visibility: visible;
+  }
+  #print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    display: block !important;
+  }
+  .doc-modal-container,
+  .site-shell,
+  .site-header,
+  .site-footer {
+    display: none !important;
+  }
+}
+

@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { ClientDocumentSuite } from './ClientDocumentSuite'
 import type { Locale } from '../types'
+import type { ClientInfo } from '../lib/clientDocuments'
 
 const SUPABASE_URL = 'https://xiqldupgxasaqaswcdbs.supabase.co'
 const SUPABASE_KEY = 'sb_publishable_IyEQPWDQnrrC6PIHFdJWNw_K2iAA8BX'
@@ -19,9 +21,11 @@ export type Submission = {
   email_status?: string
   phone_status?: string
   notification_payload?: any
+  documents?: Record<string, string>
+  deal_value?: string
 }
 
-type TabType = 'pending' | 'contacted' | 'in_progress' | 'all'
+type TabType = 'pending' | 'contacted' | 'in_progress' | 'finished' | 'lost' | 'all'
 
 export function AdminPortal({ locale }: { locale: Locale }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -35,6 +39,9 @@ export function AdminPortal({ locale }: { locale: Locale }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState<TabType>('pending')
   const [actionMessage, setActionMessage] = useState('')
+
+  // State for Document Suite Modal
+  const [activeDocClient, setActiveDocClient] = useState<Submission | null>(null)
 
   const isArabic = locale === 'ar'
 
@@ -82,12 +89,15 @@ export function AdminPortal({ locale }: { locale: Locale }) {
 
     // 2. Direct REST Fallback
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/contact_submissions?select=*&order=created_at.desc`, {
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-        },
-      })
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/contact_submissions?select=*&order=created_at.desc`,
+        {
+          headers: {
+            apikey: SUPABASE_KEY,
+            Authorization: `Bearer ${SUPABASE_KEY}`,
+          },
+        }
+      )
       if (!res.ok) {
         const errText = await res.text()
         throw new Error(`HTTP ${res.status}: ${errText}`)
@@ -137,6 +147,8 @@ export function AdminPortal({ locale }: { locale: Locale }) {
         contacted: isArabic ? 'تم نقل الطلب إلى "تم التواصل"' : 'Moved to "Contacted"',
         pending: isArabic ? 'تم نقل الطلب إلى "قيد الانتظار"' : 'Moved to "Pending"',
         in_progress: isArabic ? 'تم نقل الطلب إلى "جاري العمل"' : 'Moved to "In Progress"',
+        finished: isArabic ? '🎉 تم إنهاء وتسليم المشروع بنجاح!' : '🎉 Project marked as Finished & Delivered!',
+        lost: isArabic ? 'تم نقل الطلب إلى "لم يتم الاتفاق"' : 'Moved to "Didn\'t Get Deal"',
       }
       showNotification(statusLabels[newStatus] || (isArabic ? 'تم تحديث الحالة' : 'Status updated'))
     } catch (err) {
@@ -148,7 +160,9 @@ export function AdminPortal({ locale }: { locale: Locale }) {
 
   async function deleteSubmission(id: number) {
     const confirmed = window.confirm(
-      isArabic ? 'هل أنت متأكد من حذف هذا الطلب نهائياً؟' : 'Are you sure you want to delete this brief permanently?'
+      isArabic
+        ? 'هل أنت متأكد من حذف هذا الطلب نهائياً؟'
+        : 'Are you sure you want to delete this brief permanently?'
     )
     if (!confirmed) return
 
@@ -175,7 +189,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
 
   function showNotification(msg: string) {
     setActionMessage(msg)
-    setTimeout(() => setActionMessage(''), 3000)
+    setTimeout(() => setActionMessage(''), 3500)
   }
 
   function copySubmissionToClipboard(sub: Submission) {
@@ -199,21 +213,27 @@ export function AdminPortal({ locale }: { locale: Locale }) {
     return `https://wa.me/${clean}?text=${encodeURIComponent(greeting)}`
   }
 
-  // Real-time Counters
+  // Real-time Counters for all 5 pipeline stages + all
   const counts = useMemo(() => {
     let pending = 0
     let contacted = 0
     let inProgress = 0
+    let finished = 0
+    let lost = 0
     for (const sub of submissions) {
       const st = sub.status || 'pending'
       if (st === 'pending') pending++
       else if (st === 'contacted') contacted++
       else if (st === 'in_progress') inProgress++
+      else if (st === 'finished') finished++
+      else if (st === 'lost') lost++
     }
     return {
       pending,
       contacted,
       inProgress,
+      finished,
+      lost,
       all: submissions.length,
     }
   }, [submissions])
@@ -237,6 +257,10 @@ export function AdminPortal({ locale }: { locale: Locale }) {
         matchesTab = currentStatus === 'contacted'
       } else if (activeTab === 'in_progress') {
         matchesTab = currentStatus === 'in_progress'
+      } else if (activeTab === 'finished') {
+        matchesTab = currentStatus === 'finished'
+      } else if (activeTab === 'lost') {
+        matchesTab = currentStatus === 'lost'
       } else if (activeTab === 'all') {
         matchesTab = true
       }
@@ -284,7 +308,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
             </h2>
             <p style={{ color: '#aaa69d', fontSize: '13px', marginBottom: '24px', lineHeight: '1.5' }}>
               {isArabic
-                ? 'أدخل رمز الدخول لمتابعة وإدارة طلبات العملاء والتواصل الفوري.'
+                ? 'أدخل رمز الدخول لمتابعة وإدارة طلبات العملاء وإصدار العقود والفواتير.'
                 : 'Enter your studio access passcode to manage incoming client project briefs.'}
             </p>
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -345,9 +369,9 @@ export function AdminPortal({ locale }: { locale: Locale }) {
           }}
         >
           <div>
-            <span className="eyebrow">{isArabic ? 'لوحة إدارة الاستوديو' : 'Internal Dashboard / Client Leads'}</span>
+            <span className="eyebrow">{isArabic ? 'لوحة إدارة الاستوديو' : 'Internal Dashboard / Client Pipeline'}</span>
             <h1 style={{ fontSize: 'clamp(32px, 4vw, 52px)', marginTop: '8px' }}>
-              {isArabic ? 'طلبات المشاريع والتواصل' : 'Project Briefs & Outreach'}
+              {isArabic ? 'إدارة الطلبات، العقود، والفواتير' : 'Client Deals & Invoicing'}
             </h1>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -369,7 +393,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
           </div>
         </div>
 
-        {/* Action toast */}
+        {/* Action toast notification */}
         {actionMessage && (
           <div
             style={{
@@ -405,21 +429,22 @@ export function AdminPortal({ locale }: { locale: Locale }) {
           </div>
         )}
 
-        {/* Status Navigation Tabs with Real-Time Counters */}
+        {/* Pipeline Navigation Tabs */}
         <div
           style={{
             display: 'flex',
             flexWrap: 'wrap',
-            gap: '12px',
+            gap: '10px',
             marginBottom: '28px',
             borderBottom: '2px solid var(--ink)',
             paddingBottom: '12px',
           }}
         >
+          {/* 1. Pending Tab */}
           <button
             onClick={() => setActiveTab('pending')}
             style={{
-              padding: '10px 18px',
+              padding: '10px 16px',
               font: '700 12px "DM Mono", monospace',
               textTransform: 'uppercase',
               background: activeTab === 'pending' ? 'var(--ink)' : '#fff',
@@ -445,10 +470,11 @@ export function AdminPortal({ locale }: { locale: Locale }) {
             </span>
           </button>
 
+          {/* 2. Contacted Tab */}
           <button
             onClick={() => setActiveTab('contacted')}
             style={{
-              padding: '10px 18px',
+              padding: '10px 16px',
               font: '700 12px "DM Mono", monospace',
               textTransform: 'uppercase',
               background: activeTab === 'contacted' ? 'var(--ink)' : '#fff',
@@ -474,10 +500,11 @@ export function AdminPortal({ locale }: { locale: Locale }) {
             </span>
           </button>
 
+          {/* 3. In Progress Tab */}
           <button
             onClick={() => setActiveTab('in_progress')}
             style={{
-              padding: '10px 18px',
+              padding: '10px 16px',
               font: '700 12px "DM Mono", monospace',
               textTransform: 'uppercase',
               background: activeTab === 'in_progress' ? 'var(--ink)' : '#fff',
@@ -503,10 +530,71 @@ export function AdminPortal({ locale }: { locale: Locale }) {
             </span>
           </button>
 
+          {/* 4. Finished Tab */}
+          <button
+            onClick={() => setActiveTab('finished')}
+            style={{
+              padding: '10px 16px',
+              font: '700 12px "DM Mono", monospace',
+              textTransform: 'uppercase',
+              background: activeTab === 'finished' ? 'var(--ink)' : '#fff',
+              color: activeTab === 'finished' ? 'var(--paper)' : 'var(--ink)',
+              border: '1px solid var(--ink)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <span>🏁 {isArabic ? 'تم التسليم' : 'Finished'}</span>
+            <span
+              style={{
+                background: activeTab === 'finished' ? '#8b5cf6' : '#e8e3d9',
+                color: activeTab === 'finished' ? '#fff' : '#171717',
+                padding: '2px 7px',
+                borderRadius: '10px',
+                fontSize: '11px',
+              }}
+            >
+              {counts.finished}
+            </span>
+          </button>
+
+          {/* 5. Lost Deals Tab */}
+          <button
+            onClick={() => setActiveTab('lost')}
+            style={{
+              padding: '10px 16px',
+              font: '700 12px "DM Mono", monospace',
+              textTransform: 'uppercase',
+              background: activeTab === 'lost' ? 'var(--ink)' : '#fff',
+              color: activeTab === 'lost' ? 'var(--paper)' : 'var(--ink)',
+              border: '1px solid var(--ink)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <span>⚪ {isArabic ? 'لم يتم الاتفاق' : "Didn't Get Deal"}</span>
+            <span
+              style={{
+                background: '#e8e3d9',
+                color: '#171717',
+                padding: '2px 7px',
+                borderRadius: '10px',
+                fontSize: '11px',
+              }}
+            >
+              {counts.lost}
+            </span>
+          </button>
+
+          {/* 6. All Tab */}
           <button
             onClick={() => setActiveTab('all')}
             style={{
-              padding: '10px 18px',
+              padding: '10px 16px',
               font: '700 12px "DM Mono", monospace',
               textTransform: 'uppercase',
               background: activeTab === 'all' ? 'var(--ink)' : '#fff',
@@ -577,8 +665,14 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                   {activeTab === 'pending'
                     ? (isArabic ? '🎉 لا توجد طلبات معلقة بانتظار التواصل!' : '🎉 No pending briefs waiting for outreach!')
                     : activeTab === 'contacted'
-                    ? (isArabic ? 'لم يتم التواصل مع أي عملاء بعد.' : 'No contacted leads in this tab yet.')
-                    : (isArabic ? 'لا توجد طلبات تطابق هذا العرض.' : 'No project briefs match this view.')}
+                    ? (isArabic ? 'لا توجد طلبات في مرحلة التواصل حالياً.' : 'No contacted leads in this tab right now.')
+                    : activeTab === 'in_progress'
+                    ? (isArabic ? 'لا توجد مشاريع جارية حالياً.' : 'No projects currently in progress.')
+                    : activeTab === 'finished'
+                    ? (isArabic ? 'لا توجد مشاريع مكتملة في هذا القسم.' : 'No finished projects in this archive yet.')
+                    : activeTab === 'lost'
+                    ? (isArabic ? 'لا توجد صفقات ملغاة.' : 'No lost deals recorded.')
+                    : (isArabic ? 'لا توجد طلبات تطابق هذا البحث.' : 'No briefs match this search.')}
                 </p>
                 <button
                   onClick={fetchSubmissions}
@@ -602,15 +696,26 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                 }
               )
               const currentStatus = sub.status || 'pending'
-              const isContacted = currentStatus === 'contacted'
 
               return (
                 <article
                   key={sub.id}
                   style={{
-                    background: isContacted ? '#faf9f6' : '#ffffff',
+                    background:
+                      currentStatus === 'finished'
+                        ? '#fdfcf7'
+                        : currentStatus === 'lost'
+                        ? '#f7f6f5'
+                        : '#ffffff',
                     border: '2px solid var(--ink)',
-                    boxShadow: isContacted ? '4px 4px 0 #888' : '8px 8px 0 var(--ink)',
+                    boxShadow:
+                      currentStatus === 'lost'
+                        ? '3px 3px 0 #999'
+                        : currentStatus === 'in_progress'
+                        ? '8px 8px 0 #1d70b8'
+                        : currentStatus === 'finished'
+                        ? '8px 8px 0 #8b5cf6'
+                        : '8px 8px 0 var(--ink)',
                     padding: '28px',
                     display: 'flex',
                     flexDirection: 'column',
@@ -618,7 +723,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                     position: 'relative',
                   }}
                 >
-                  {/* Top Header: ID, Date, Budget, and Mark Contacted Toggle */}
+                  {/* Top Header: ID, Date, Budget, Documents Button & Status Pipeline Controls */}
                   <div
                     style={{
                       display: 'flex',
@@ -655,42 +760,193 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                       >
                         💰 {sub.budget || 'Not sure yet'}
                       </span>
+
+                      {/* Documents & Invoices Button (Opens the 4-Phase Suite) */}
+                      <button
+                        onClick={() => setActiveDocClient(sub)}
+                        style={{
+                          background: currentStatus === 'in_progress' ? '#1d70b8' : 'var(--ink)',
+                          color: '#fff',
+                          border: '1px solid var(--ink)',
+                          padding: '6px 14px',
+                          font: '700 11px "DM Mono", monospace',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          boxShadow: '2px 2px 0 var(--red)',
+                        }}
+                      >
+                        📄 {isArabic ? 'العقود والفواتير (Invoices & Docs)' : 'Invoices, SOW & Contract Suite'}
+                      </button>
                     </div>
 
-                    {/* Status Toggle Buttons */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      {currentStatus === 'pending' ? (
-                        <button
-                          onClick={() => updateStatus(sub.id, 'contacted')}
-                          style={{
-                            background: '#25D366',
-                            color: '#fff',
-                            border: '1px solid #1fa34e',
-                            padding: '8px 16px',
-                            font: '700 11px "DM Mono", monospace',
-                            textTransform: 'uppercase',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            boxShadow: '2px 2px 0 var(--ink)',
-                          }}
-                        >
-                          ✓ {isArabic ? 'تم التواصل (نقل إلى Contacted)' : 'Mark as Contacted'}
-                        </button>
-                      ) : (
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <span
+                    {/* Pipeline Stage Transitions */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                      {/* 1. Pending Stage Buttons */}
+                      {currentStatus === 'pending' && (
+                        <>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'contacted')}
                             style={{
                               background: '#25D366',
+                              color: '#fff',
+                              border: '1px solid #1fa34e',
+                              padding: '8px 14px',
+                              font: '700 11px "DM Mono", monospace',
+                              textTransform: 'uppercase',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            ✓ {isArabic ? 'تم التواصل' : 'Mark as Contacted'}
+                          </button>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'lost')}
+                            style={{
+                              background: '#fff',
+                              border: '1px solid var(--line)',
+                              color: '#777',
+                              padding: '8px 12px',
+                              font: '11px "DM Mono", monospace',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ✕ {isArabic ? 'لم يتم الاتفاق' : "Didn't Get Deal"}
+                          </button>
+                        </>
+                      )}
+
+                      {/* 2. Contacted Stage Buttons */}
+                      {currentStatus === 'contacted' && (
+                        <>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'in_progress')}
+                            style={{
+                              background: '#1d70b8',
+                              color: '#fff',
+                              border: '1px solid #1d70b8',
+                              padding: '8px 16px',
+                              font: '700 11px "DM Mono", monospace',
+                              textTransform: 'uppercase',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            ⚡ {isArabic ? 'بدء العمل (In Progress)' : 'Won Deal → In Progress'}
+                          </button>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'lost')}
+                            style={{
+                              background: '#fff',
+                              border: '1px solid var(--line)',
+                              color: '#777',
+                              padding: '8px 12px',
+                              font: '11px "DM Mono", monospace',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ✕ {isArabic ? 'لم يتم الاتفاق' : "Didn't Get Deal"}
+                          </button>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'pending')}
+                            style={{
+                              background: '#fff',
+                              border: '1px solid var(--line)',
+                              padding: '8px 12px',
+                              font: '11px "DM Mono", monospace',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ↩ {isArabic ? 'إعادة لقيد الانتظار' : 'Back to Pending'}
+                          </button>
+                        </>
+                      )}
+
+                      {/* 3. In Progress Stage Buttons */}
+                      {currentStatus === 'in_progress' && (
+                        <>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'finished')}
+                            style={{
+                              background: '#8b5cf6',
+                              color: '#fff',
+                              border: '1px solid #7c3aed',
+                              padding: '8px 16px',
+                              font: '700 11px "DM Mono", monospace',
+                              textTransform: 'uppercase',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            🎉 {isArabic ? 'تم الإنهاء والتسليم النهائي' : 'Mark as Finished & Delivered'}
+                          </button>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'lost')}
+                            style={{
+                              background: '#fff',
+                              border: '1px solid var(--line)',
+                              color: '#777',
+                              padding: '8px 12px',
+                              font: '11px "DM Mono", monospace',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ✕ {isArabic ? 'إلغاء المشروع' : 'Cancel / Lost'}
+                          </button>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'contacted')}
+                            style={{
+                              background: '#fff',
+                              border: '1px solid var(--line)',
+                              padding: '8px 12px',
+                              font: '11px "DM Mono", monospace',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ↩ {isArabic ? 'إعادة لـ Contacted' : 'Back to Contacted'}
+                          </button>
+                        </>
+                      )}
+
+                      {/* 4. Finished Stage Buttons */}
+                      {currentStatus === 'finished' && (
+                        <>
+                          <span
+                            style={{
+                              background: '#8b5cf6',
                               color: '#fff',
                               padding: '6px 12px',
                               font: '700 11px "DM Mono", monospace',
                               textTransform: 'uppercase',
                             }}
                           >
-                            ✓ {isArabic ? 'تم التواصل' : 'Contacted'}
+                            🏁 {isArabic ? 'مشروع مكتمل ومنشور' : 'Finished & Launched'}
                           </span>
+                          <button
+                            onClick={() => updateStatus(sub.id, 'in_progress')}
+                            style={{
+                              background: '#fff',
+                              border: '1px solid var(--line)',
+                              padding: '6px 12px',
+                              font: '10px "DM Mono", monospace',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ↩ {isArabic ? 'إعادة لجاري العمل' : 'Reopen In Progress'}
+                          </button>
+                        </>
+                      )}
+
+                      {/* 5. Lost Stage Buttons */}
+                      {currentStatus === 'lost' && (
+                        <>
                           <button
                             onClick={() => updateStatus(sub.id, 'pending')}
                             style={{
@@ -701,23 +957,23 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                               cursor: 'pointer',
                             }}
                           >
-                            ↩ {isArabic ? 'إعادة إلى قيد الانتظار' : 'Back to Pending'}
+                            ↩ {isArabic ? 'استعادة لقيد الانتظار' : 'Restore to Pending'}
                           </button>
-                        </div>
+                        </>
                       )}
 
                       <button
                         onClick={() => copySubmissionToClipboard(sub)}
                         title="Copy Summary"
                         style={{
-                          padding: '6px 12px',
+                          padding: '6px 10px',
                           font: '11px "DM Mono", monospace',
                           border: '1px solid var(--line)',
                           background: '#fff',
                           cursor: 'pointer',
                         }}
                       >
-                        📋 {isArabic ? 'نسخ' : 'Copy'}
+                        📋
                       </button>
 
                       <button
@@ -854,7 +1110,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                     </div>
                   </div>
 
-                  {/* Instant Contact Action Toolbar: WhatsApp, Call, Email */}
+                  {/* Quick Action Contact Toolbar */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '4px' }}>
                     {cleanPhone && (
                       <a
@@ -876,7 +1132,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                           gap: '8px',
                         }}
                       >
-                        💬 {isArabic ? 'تواصل عبر واتساب' : 'WhatsApp Client'}
+                        💬 {isArabic ? 'واتساب العميل' : 'WhatsApp Client'}
                       </a>
                     )}
 
@@ -918,7 +1174,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                           gap: '8px',
                         }}
                       >
-                        ✉️ {isArabic ? 'إرسال بريد إلكتروني' : `Email ${sub.email}`}
+                        ✉️ {isArabic ? 'إرسال بريد' : `Email ${sub.email}`}
                       </a>
                     )}
                   </div>
@@ -928,6 +1184,21 @@ export function AdminPortal({ locale }: { locale: Locale }) {
           </div>
         )}
       </div>
+
+      {/* Document Suite Modal (When a client is selected) */}
+      {activeDocClient && (
+        <ClientDocumentSuite
+          client={activeDocClient as ClientInfo}
+          initialDocuments={activeDocClient.documents || {}}
+          locale={locale}
+          onClose={() => setActiveDocClient(null)}
+          onSaved={(updatedDocs) => {
+            setSubmissions((prev) =>
+              prev.map((s) => (s.id === activeDocClient.id ? { ...s, documents: updatedDocs } : s))
+            )
+          }}
+        />
+      )}
     </section>
   )
 }
