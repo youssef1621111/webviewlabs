@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import { createClient } from "npm:@supabase/supabase-js@2"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,6 +8,7 @@ const corsHeaders = {
 }
 
 interface ContactSubmission {
+  id?: number
   name: string
   phone: string
   email?: string | null
@@ -54,6 +56,9 @@ function generateWebviewLabsEmailHtml(data: ContactSubmission): string {
       border-collapse: collapse;
       mso-table-lspace: 0pt;
       mso-table-rspace: 0pt;
+    }
+    td {
+      padding: 0;
     }
     .wrapper {
       width: 100%;
@@ -386,7 +391,6 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json()
-    // Support both direct invocation and Supabase database webhook (record)
     const payload: ContactSubmission = body.record ? body.record : body
 
     if (!payload.name || !payload.phone || !payload.company || !payload.brief) {
@@ -409,9 +413,14 @@ Deno.serve(async (req: Request) => {
     let emailError: string | null = null
     let phoneError: string | null = null
 
-    // 1. Send Email if email is present and provider is configured
+    // 1. Send Email if email is present and any provider key is configured
     const resendApiKey = Deno.env.get("RESEND_API_KEY")
-    const customFromEmail = Deno.env.get("SENDER_EMAIL") || "webviewlabs <notifications@webviewlabs.com>"
+    const brevoApiKey = Deno.env.get("BREVO_API_KEY")
+    const sendgridApiKey = Deno.env.get("SENDGRID_API_KEY")
+    const postmarkToken = Deno.env.get("POSTMARK_SERVER_TOKEN")
+    const emailWebhookUrl = Deno.env.get("EMAIL_WEBHOOK_URL")
+
+    const senderEmail = Deno.env.get("SENDER_EMAIL") || "webviewlabs <notifications@webviewlabs.com>"
     const teamNotifyEmail = Deno.env.get("TEAM_NOTIFY_EMAIL") || "hello@webviewlabs.com"
 
     if (payload.email) {
@@ -424,7 +433,7 @@ Deno.serve(async (req: Request) => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              from: customFromEmail,
+              from: senderEmail,
               to: [payload.email],
               bcc: [teamNotifyEmail],
               subject: `Brief received · webviewlabs (${payload.company})`,
@@ -434,22 +443,96 @@ Deno.serve(async (req: Request) => {
 
           if (!res.ok) {
             const errBody = await res.text()
-            emailError = `Resend API returned status ${res.status}: ${errBody}`
+            emailError = `Resend API (${res.status}): ${errBody}`
             console.error("Resend error:", emailError)
           } else {
             emailSent = true
-            console.log(`Confirmation email sent to ${payload.email}`)
           }
         } catch (e) {
           emailError = e instanceof Error ? e.message : String(e)
-          console.error("Failed to send email:", emailError)
+        }
+      } else if (brevoApiKey) {
+        try {
+          const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+            method: "POST",
+            headers: {
+              "api-key": brevoApiKey,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              sender: { name: "webviewlabs", email: "hello@webviewlabs.com" },
+              to: [{ email: payload.email, name: payload.name }],
+              subject: `Brief received · webviewlabs (${payload.company})`,
+              htmlContent: emailHtml,
+            }),
+          })
+          if (res.ok) emailSent = true
+          else emailError = await res.text()
+        } catch (e) {
+          emailError = e instanceof Error ? e.message : String(e)
+        }
+      } else if (sendgridApiKey) {
+        try {
+          const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${sendgridApiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              personalizations: [{ to: [{ email: payload.email }] }],
+              from: { email: "hello@webviewlabs.com", name: "webviewlabs" },
+              subject: `Brief received · webviewlabs (${payload.company})`,
+              content: [{ type: "text/html", value: emailHtml }],
+            }),
+          })
+          if (res.ok) emailSent = true
+          else emailError = await res.text()
+        } catch (e) {
+          emailError = e instanceof Error ? e.message : String(e)
+        }
+      } else if (postmarkToken) {
+        try {
+          const res = await fetch("https://api.postmarkapp.com/email", {
+            method: "POST",
+            headers: {
+              "X-Postmark-Server-Token": postmarkToken,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              From: senderEmail,
+              To: payload.email,
+              Subject: `Brief received · webviewlabs (${payload.company})`,
+              HtmlBody: emailHtml,
+            }),
+          })
+          if (res.ok) emailSent = true
+          else emailError = await res.text()
+        } catch (e) {
+          emailError = e instanceof Error ? e.message : String(e)
+        }
+      } else if (emailWebhookUrl) {
+        try {
+          const res = await fetch(emailWebhookUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: payload.email,
+              subject: `Brief received · webviewlabs (${payload.company})`,
+              html: emailHtml,
+              data: payload,
+            }),
+          })
+          if (res.ok) emailSent = true
+        } catch (e) {
+          emailError = e instanceof Error ? e.message : String(e)
         }
       } else {
-        console.log("RESEND_API_KEY not configured. Generated styled email HTML ready.")
+        emailError = "No email provider secret configured (e.g. RESEND_API_KEY, BREVO_API_KEY, SENDGRID_API_KEY, or EMAIL_WEBHOOK_URL)."
       }
     }
 
-    // 2. Send SMS / WhatsApp to phone if Twilio or SMS Webhook is configured
+    // 2. Send SMS / WhatsApp to phone
     const twilioSid = Deno.env.get("TWILIO_ACCOUNT_SID")
     const twilioAuth = Deno.env.get("TWILIO_AUTH_TOKEN")
     const twilioFrom = Deno.env.get("TWILIO_PHONE_NUMBER")
@@ -466,13 +549,9 @@ Deno.serve(async (req: Request) => {
             data: payload,
           }),
         })
-        if (smsRes.ok) {
-          phoneSent = true
-          console.log(`SMS dispatched via webhook for ${payload.phone}`)
-        }
+        if (smsRes.ok) phoneSent = true
       } catch (e) {
         phoneError = e instanceof Error ? e.message : String(e)
-        console.error("SMS webhook error:", phoneError)
       }
     } else if (twilioSid && twilioAuth && twilioFrom) {
       try {
@@ -491,20 +570,53 @@ Deno.serve(async (req: Request) => {
           body: formData.toString(),
         })
 
-        if (!twilioRes.ok) {
-          const errText = await twilioRes.text()
-          phoneError = `Twilio returned status ${twilioRes.status}: ${errText}`
-          console.error("Twilio error:", phoneError)
-        } else {
+        if (twilioRes.ok) {
           phoneSent = true
-          console.log(`SMS sent via Twilio to ${payload.phone}`)
+        } else {
+          phoneError = await twilioRes.text()
         }
       } catch (e) {
         phoneError = e instanceof Error ? e.message : String(e)
-        console.error("Twilio send failure:", phoneError)
       }
     } else {
-      console.log("Phone provider credentials not set. Formatted bilingual message ready.")
+      phoneError = "No phone provider secret configured (e.g. TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER or SMS_WEBHOOK_URL)."
+    }
+
+    // 3. Update status and save payload in Supabase Database
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+    if (supabaseUrl && supabaseServiceKey) {
+      try {
+        const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey)
+        const updateData = {
+          email_status: emailSent ? "sent" : emailError ? "error" : "skipped",
+          phone_status: phoneSent ? "sent" : phoneError ? "error" : "skipped",
+          notification_payload: {
+            emailSent,
+            phoneSent,
+            emailError,
+            phoneError,
+            formattedSms: phoneMessages.combined,
+            generatedAt: new Date().toISOString(),
+          },
+        }
+
+        if (payload.id) {
+          await supabaseAdmin
+            .from("contact_submissions")
+            .update(updateData)
+            .eq("id", payload.id)
+        } else {
+          await supabaseAdmin
+            .from("contact_submissions")
+            .update(updateData)
+            .eq("phone", payload.phone)
+            .order("created_at", { ascending: false })
+            .limit(1)
+        }
+      } catch (dbErr) {
+        console.error("DB update error:", dbErr)
+      }
     }
 
     return new Response(
@@ -515,7 +627,7 @@ Deno.serve(async (req: Request) => {
         emailError,
         phoneError,
         phoneMessage: phoneMessages.combined,
-        message: "Confirmation notification processed successfully by webviewlabs notification engine.",
+        message: "Confirmation notification processed by webviewlabs notification engine.",
       }),
       {
         status: 200,
