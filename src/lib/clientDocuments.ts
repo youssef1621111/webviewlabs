@@ -812,7 +812,10 @@ export function generatePrintableDocumentHtml(
 }
 
 export async function downloadDocumentAsPdfFile(
-  element: HTMLElement,
+  title: string,
+  docKey: DocumentKey,
+  content: string,
+  client: ClientInfo,
   filename: string
 ): Promise<void> {
   // Ensure html2pdf library is dynamically available
@@ -820,6 +823,10 @@ export async function downloadDocumentAsPdfFile(
     await new Promise<void>((resolve, reject) => {
       const existing = document.querySelector('script[src*="html2pdf"]')
       if (existing) {
+        if ((window as any).html2pdf) {
+          resolve()
+          return
+        }
         existing.addEventListener('load', () => resolve())
         return
       }
@@ -833,36 +840,40 @@ export async function downloadDocumentAsPdfFile(
     })
   }
 
-  // Clone element into clean off-screen A4 container
-  const clone = element.cloneNode(true) as HTMLElement
-  clone.style.width = '794px'
-  clone.style.maxWidth = '794px'
-  clone.style.height = 'auto'
-  clone.style.maxHeight = 'none'
-  clone.style.overflow = 'visible'
-  clone.style.boxShadow = 'none'
-  clone.style.border = '1px solid #171717'
-  clone.style.margin = '0'
-  clone.style.position = 'fixed'
-  clone.style.top = '-99999px'
-  clone.style.left = '0'
-  clone.style.zIndex = '-9999'
-  clone.style.background = '#ffffff'
+  // Generate complete styled printable HTML
+  const fullHtml = generatePrintableDocumentHtml(title, docKey, content, client)
 
-  // Remove any scroll classes
-  const scrollables = clone.querySelectorAll('*')
-  scrollables.forEach((el) => {
-    const htmlEl = el as HTMLElement
-    if (htmlEl.style) {
-      htmlEl.style.overflow = 'visible'
-      htmlEl.style.maxHeight = 'none'
-    }
-  })
+  // Create temporary container positioned at (0,0) with z-index behind the page
+  const tempWrapper = document.createElement('div')
+  tempWrapper.id = 'pdf-render-temp-wrapper'
+  tempWrapper.style.position = 'fixed'
+  tempWrapper.style.top = '0px'
+  tempWrapper.style.left = '0px'
+  tempWrapper.style.width = '794px'
+  tempWrapper.style.minHeight = '1000px'
+  tempWrapper.style.zIndex = '-9999'
+  tempWrapper.style.opacity = '1'
+  tempWrapper.style.backgroundColor = '#ffffff'
+  tempWrapper.style.pointerEvents = 'none'
+  tempWrapper.style.margin = '0'
+  tempWrapper.style.padding = '0'
 
-  document.body.appendChild(clone)
+  // Extract body and style from full HTML
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(fullHtml, 'text/html')
+  const styles = doc.querySelectorAll('style, link')
+  const bodyContent = doc.body.innerHTML
+
+  styles.forEach((s) => tempWrapper.appendChild(s.cloneNode(true)))
+  
+  const innerDiv = document.createElement('div')
+  innerDiv.innerHTML = bodyContent
+  tempWrapper.appendChild(innerDiv)
+
+  document.body.appendChild(tempWrapper)
 
   const opt = {
-    margin: [8, 8, 8, 8],
+    margin: [6, 6, 6, 6],
     filename: filename.endsWith('.pdf') ? filename : `${filename}.pdf`,
     image: { type: 'jpeg', quality: 0.98 },
     html2canvas: {
@@ -870,19 +881,24 @@ export async function downloadDocumentAsPdfFile(
       useCORS: true,
       logging: false,
       scrollY: 0,
-      windowWidth: 1024,
+      scrollX: 0,
+      windowWidth: 820,
+      backgroundColor: '#ffffff',
     },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
   }
 
   try {
-    await (window as any).html2pdf().set(opt).from(clone).save()
+    // Wait a brief moment for fonts and images to compute layout
+    await new Promise((r) => setTimeout(r, 100))
+    await (window as any).html2pdf().set(opt).from(tempWrapper).save()
   } finally {
-    if (document.body.contains(clone)) {
-      document.body.removeChild(clone)
+    if (document.body.contains(tempWrapper)) {
+      document.body.removeChild(tempWrapper)
     }
   }
 }
+
 
 

@@ -108,12 +108,18 @@ export function ClientDocumentSuite({
 
   // Direct PDF Download
   async function handleDownloadRealPdf() {
-    if (!pdfContainerRef.current) return
     setIsDownloadingPdf(true)
     try {
       const cleanCompany = (client.company || 'client').replace(/[^a-zA-Z0-9_\u0600-\u06FF-]/g, '_')
       const filename = `WV_${cleanCompany}_${activeDef.key}.pdf`
-      await downloadDocumentAsPdfFile(pdfContainerRef.current, filename)
+      const docTitle = isArabic ? activeDef.titleAr : activeDef.title
+      await downloadDocumentAsPdfFile(
+        docTitle,
+        activeDef.key,
+        currentText,
+        client,
+        filename
+      )
     } catch (err) {
       console.error('Failed to generate PDF file:', err)
       alert(isArabic ? 'فشل تحميل ملف PDF' : 'Failed to download PDF')
@@ -121,6 +127,7 @@ export function ClientDocumentSuite({
       setIsDownloadingPdf(false)
     }
   }
+
 
   // Standalone Printable Window Fallback
   function handlePrintWindow() {
