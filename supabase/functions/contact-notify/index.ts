@@ -555,7 +555,13 @@ Deno.serve(async (req: Request) => {
       try {
         const isWhatsApp = twilioFrom.startsWith("whatsapp:")
         let formattedTo = payload.phone.trim().replace(/[^0-9+]/g, "")
-        if (!formattedTo.startsWith("+")) formattedTo = "+" + formattedTo
+        if (formattedTo.startsWith("01") && formattedTo.length === 11) {
+          formattedTo = "+2" + formattedTo
+        } else if (formattedTo.startsWith("00")) {
+          formattedTo = "+" + formattedTo.slice(2)
+        } else if (!formattedTo.startsWith("+")) {
+          formattedTo = "+" + formattedTo
+        }
         if (isWhatsApp && !formattedTo.startsWith("whatsapp:")) {
           formattedTo = "whatsapp:" + formattedTo
         }

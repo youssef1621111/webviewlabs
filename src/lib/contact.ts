@@ -9,14 +9,30 @@ export type ContactPayload = {
   budget: string
 }
 
+export function normalizePhone(raw: string): string {
+  const cleaned = raw.trim().replace(/[^0-9+]/g, '')
+  if (cleaned.startsWith('01') && cleaned.length === 11) {
+    return '+2' + cleaned
+  }
+  if (cleaned.startsWith('00')) {
+    return '+' + cleaned.slice(2)
+  }
+  if (!cleaned.startsWith('+') && cleaned.length >= 8) {
+    return '+' + cleaned
+  }
+  return cleaned
+}
+
 export async function submitContact(payload: ContactPayload) {
   if (!supabase) {
     return { persisted: false as const }
   }
 
+  const phone = normalizePhone(payload.phone)
+
   const { error } = await supabase.from('contact_submissions').insert({
     name: payload.name,
-    phone: payload.phone,
+    phone: payload.phone ? phone : payload.phone,
     email: payload.email || null,
     company: payload.company,
     brief: payload.brief,
@@ -28,7 +44,10 @@ export async function submitContact(payload: ContactPayload) {
 
   try {
     await supabase.functions.invoke('contact-notify', {
-      body: payload,
+      body: {
+        ...payload,
+        phone,
+      },
     })
   } catch (notifyError) {
     console.warn('Supabase notification dispatch:', notifyError)
