@@ -41,7 +41,14 @@ export function AdminPortal({ locale }: { locale: Locale }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState<TabType>('pending')
   const [actionMessage, setActionMessage] = useState('')
-  const [adminView, setAdminView] = useState<AdminView>('pipeline')
+  const [adminView, setAdminView] = useState<AdminView>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search).get('view')
+      if (p === 'crm') return 'crm'
+    }
+    return 'pipeline'
+  })
+
 
   // State for Document Suite Modal
   const [activeDocClient, setActiveDocClient] = useState<Submission | null>(null)
@@ -464,6 +471,48 @@ export function AdminPortal({ locale }: { locale: Locale }) {
             ⚠️ {fetchError}
           </div>
         )}
+
+        {/* CRM Quick Switch Notice Banner */}
+        <div
+          style={{
+            background: '#fff5f5',
+            border: '2px solid var(--red)',
+            boxShadow: '4px 4px 0 var(--red)',
+            padding: '14px 20px',
+            marginBottom: '28px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px',
+          }}
+        >
+          <div>
+            <div style={{ font: '700 13px "DM Sans", sans-serif', color: '#171717' }}>
+              💰 {isArabic ? 'نظام الـ CRM، الخزينة، ومستحقات العملاء والمساعد الذكي AI CFO' : 'Studio CRM, Cash Drawer, Screenshot Proofs & AI CFO'}
+            </div>
+            <div style={{ font: '11px "DM Mono", monospace', color: '#5d5a54', marginTop: '2px' }}>
+              {isArabic
+                ? 'إدارة أسعار المشاريع بالكامل، خصم الدفعات المقدمة، رفع إيصالات التحويل، وحساب المتبقي تلقائياً.'
+                : 'Track full contract prices, deduct deposits, upload InstaPay/bank receipt screenshots, and chat with AI CFO.'}
+            </div>
+          </div>
+          <button
+            onClick={() => setAdminView('crm')}
+            style={{
+              background: 'var(--red)',
+              color: '#fff',
+              border: 'none',
+              padding: '8px 18px',
+              font: '700 11px "DM Mono", monospace',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {isArabic ? 'فتح لوحة CRM والخزينة ←' : 'Open Studio CRM & Cash Drawer →'}
+          </button>
+        </div>
 
         {/* Pipeline Navigation Tabs */}
         <div

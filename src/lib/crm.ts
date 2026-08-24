@@ -198,3 +198,36 @@ export function calcStudioTotals(deals: Deal[], allTransactions: Transaction[], 
 export function fmt(amount: number): string {
   return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
+
+export function extractFinancialsFromSubmission(sub: any) {
+  let total = 0
+  if (sub.documents && typeof sub.documents === 'object') {
+    if (sub.documents.deposit_invoice) {
+      const text = String(sub.documents.deposit_invoice)
+      const match = text.match(/Total Project Value:\s*\$([0-9,]+(\.[0-9]{2})?)/i)
+      if (match && match[1]) {
+        total = parseFloat(match[1].replace(/,/g, '')) || 0
+      }
+    }
+    if (!total && sub.documents.final_invoice) {
+      const text = String(sub.documents.final_invoice)
+      const match = text.match(/Total Project Value:\s*\$([0-9,]+(\.[0-9]{2})?)/i)
+      if (match && match[1]) {
+        total = parseFloat(match[1].replace(/,/g, '')) || 0
+      }
+    }
+  }
+  if (!total && sub.deal_value && /^[0-9.]+$/.test(String(sub.deal_value))) {
+    total = parseFloat(sub.deal_value) || 0
+  }
+  if (!total && sub.budget) {
+    if (sub.budget === 'Under $5k') total = 3500
+    else if (sub.budget === '$5k - $10k') total = 7500
+    else if (sub.budget === '$10k - $20k') total = 15000
+    else if (sub.budget === '$20k+') total = 25000
+  }
+  const deposit = Math.round(total * 0.5)
+  const finalVal = total - deposit
+  return { total, deposit, finalVal }
+}
+

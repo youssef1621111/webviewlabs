@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { Deal, Transaction, DealWithRelations, Task, DealFilterTab } from '../lib/crm'
-import { calcStudioTotals, calcDealFinancials, fmt, DEFAULT_TASKS } from '../lib/crm'
+import { calcStudioTotals, calcDealFinancials, fmt, DEFAULT_TASKS, extractFinancialsFromSubmission } from '../lib/crm'
 import { AiAnalyst } from './AiAnalyst'
 import type { Locale } from '../types'
 
@@ -121,15 +121,57 @@ export function CrmDashboard({ locale }: Props) {
   async function load() {
     setLoading(true)
     try {
-      const [dealsData, txData, subsData, allTasks] = await Promise.all([
+      const [dealsDataRaw, txDataRaw, subsDataRaw, allTasks] = await Promise.all([
         dbGet('deals?select=*&order=created_at.desc'),
         dbGet('transactions?select=*&order=paid_at.desc'),
-        dbGet('contact_submissions?select=id,name,company,phone,email,status'),
+        dbGet('contact_submissions?select=*&order=id.desc'),
         dbGet('tasks?select=*&order=sort_order.asc'),
       ])
 
+      const dealsData: Deal[] = Array.isArray(dealsDataRaw) ? dealsDataRaw : []
+      const subsData: any[] = Array.isArray(subsDataRaw) ? subsDataRaw : []
+      const txData: Transaction[] = Array.isArray(txDataRaw) ? txDataRaw : []
+
+      // 1. Auto-sync missing deals from submissions and auto-extract financials
+      const dealBySubId = new Map<number, Deal>(dealsData.map((d) => [d.submission_id, d]))
+      for (const sub of subsData) {
+        const deal = dealBySubId.get(sub.id)
+        const fin = extractFinancialsFromSubmission(sub)
+
+        if (!deal) {
+          try {
+            const res = await dbPost('deals', {
+              submission_id: sub.id,
+              deal_title: sub.company || 'Unnamed Client',
+              total_value: fin.total,
+              deposit_amount: fin.deposit,
+              final_amount: fin.finalVal,
+              notes: sub.brief || '',
+              deposit_paid_at: sub.status === 'in_progress' || sub.status === 'finished' ? new Date().toISOString() : null,
+              final_paid_at: sub.status === 'finished' ? new Date().toISOString() : null,
+              delivered_at: sub.status === 'finished' ? new Date().toISOString() : null,
+            })
+            if (Array.isArray(res) && res[0]) {
+              dealsData.push(res[0])
+              dealBySubId.set(sub.id, res[0])
+            }
+          } catch { /* ignore */ }
+        } else if ((deal.total_value === 0 || !deal.total_value) && fin.total > 0) {
+          try {
+            await dbPatch('deals', deal.id, {
+              total_value: fin.total,
+              deposit_amount: fin.deposit,
+              final_amount: fin.finalVal,
+            })
+            deal.total_value = fin.total
+            deal.deposit_amount = fin.deposit
+            deal.final_amount = fin.finalVal
+          } catch { /* ignore */ }
+        }
+      }
+
       const subMap: Record<number, any> = {}
-      ;(Array.isArray(subsData) ? subsData : []).forEach((s: any) => { subMap[s.id] = s })
+      subsData.forEach((s: any) => { subMap[s.id] = s })
 
       const tMap: Record<string, Task[]> = {}
       ;(Array.isArray(allTasks) ? allTasks : []).forEach((t: Task) => {
@@ -138,17 +180,18 @@ export function CrmDashboard({ locale }: Props) {
       })
       setTasksMap(tMap)
 
-      const enriched: DealWithRelations[] = (Array.isArray(dealsData) ? dealsData : []).map((d: Deal) => ({
+      const enriched: DealWithRelations[] = dealsData.map((d: Deal) => ({
         ...d,
         submission: subMap[d.submission_id],
         tasks: tMap[d.id] || [],
       }))
       setDeals(enriched)
-      setTransactions(Array.isArray(txData) ? txData : [])
+      setTransactions(txData)
     } finally {
       setLoading(false)
     }
   }
+
 
   useEffect(() => { load() }, [])
 
