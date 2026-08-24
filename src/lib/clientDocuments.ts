@@ -811,3 +811,78 @@ export function generatePrintableDocumentHtml(
 </html>`
 }
 
+export async function downloadDocumentAsPdfFile(
+  element: HTMLElement,
+  filename: string
+): Promise<void> {
+  // Ensure html2pdf library is dynamically available
+  if (!(window as any).html2pdf) {
+    await new Promise<void>((resolve, reject) => {
+      const existing = document.querySelector('script[src*="html2pdf"]')
+      if (existing) {
+        existing.addEventListener('load', () => resolve())
+        return
+      }
+      const script = document.createElement('script')
+      script.src =
+        'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
+      script.async = true
+      script.onload = () => resolve()
+      script.onerror = () => reject(new Error('Failed to load html2pdf'))
+      document.head.appendChild(script)
+    })
+  }
+
+  // Clone element into clean off-screen A4 container
+  const clone = element.cloneNode(true) as HTMLElement
+  clone.style.width = '794px'
+  clone.style.maxWidth = '794px'
+  clone.style.height = 'auto'
+  clone.style.maxHeight = 'none'
+  clone.style.overflow = 'visible'
+  clone.style.boxShadow = 'none'
+  clone.style.border = '1px solid #171717'
+  clone.style.margin = '0'
+  clone.style.position = 'fixed'
+  clone.style.top = '-99999px'
+  clone.style.left = '0'
+  clone.style.zIndex = '-9999'
+  clone.style.background = '#ffffff'
+
+  // Remove any scroll classes
+  const scrollables = clone.querySelectorAll('*')
+  scrollables.forEach((el) => {
+    const htmlEl = el as HTMLElement
+    if (htmlEl.style) {
+      htmlEl.style.overflow = 'visible'
+      htmlEl.style.maxHeight = 'none'
+    }
+  })
+
+  document.body.appendChild(clone)
+
+  const opt = {
+    margin: [8, 8, 8, 8],
+    filename: filename.endsWith('.pdf') ? filename : `${filename}.pdf`,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: {
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      scrollY: 0,
+      windowWidth: 1024,
+    },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+  }
+
+  try {
+    await (window as any).html2pdf().set(opt).from(clone).save()
+  } finally {
+    if (document.body.contains(clone)) {
+      document.body.removeChild(clone)
+    }
+  }
+}
+
+

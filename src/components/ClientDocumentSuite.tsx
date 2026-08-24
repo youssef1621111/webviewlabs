@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   documentDefinitions,
+  downloadDocumentAsPdfFile,
   generatePrintableDocumentHtml,
   renderMarkdownToHtml,
   type DocumentKey,
@@ -31,7 +32,7 @@ export function ClientDocumentSuite({
   const isArabic = locale === 'ar'
 
   const [selectedDocKey, setSelectedDocKey] = useState<DocumentKey>('deposit_invoice')
-  const [viewMode, setViewMode] = useState<'editor' | 'preview'>('preview')
+  const [viewMode, setViewMode] = useState<'preview' | 'editor'>('preview')
   const [docsContent, setDocsContent] = useState<Record<string, string>>(() => {
     const merged: Record<string, string> = {}
     for (const def of documentDefinitions) {
@@ -43,6 +44,9 @@ export function ClientDocumentSuite({
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'saving'>('idle')
   const [copyStatus, setCopyStatus] = useState('')
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false)
+
+  const pdfContainerRef = useRef<HTMLDivElement>(null)
 
   const activeDef = documentDefinitions.find((d) => d.key === selectedDocKey) || documentDefinitions[0]
   const currentText = docsContent[selectedDocKey] || activeDef.getDefaultContent(client)
@@ -102,8 +106,24 @@ export function ClientDocumentSuite({
     handleContentChange(defaultText)
   }
 
-  // High-Fidelity Printable PDF Generator
-  function handlePrintPdf() {
+  // Direct PDF Download
+  async function handleDownloadRealPdf() {
+    if (!pdfContainerRef.current) return
+    setIsDownloadingPdf(true)
+    try {
+      const cleanCompany = (client.company || 'client').replace(/[^a-zA-Z0-9_\u0600-\u06FF-]/g, '_')
+      const filename = `WV_${cleanCompany}_${activeDef.key}.pdf`
+      await downloadDocumentAsPdfFile(pdfContainerRef.current, filename)
+    } catch (err) {
+      console.error('Failed to generate PDF file:', err)
+      alert(isArabic ? 'فشل تحميل ملف PDF' : 'Failed to download PDF')
+    } finally {
+      setIsDownloadingPdf(false)
+    }
+  }
+
+  // Standalone Printable Window Fallback
+  function handlePrintWindow() {
     const html = generatePrintableDocumentHtml(
       isArabic ? activeDef.titleAr : activeDef.title,
       activeDef.key,
@@ -117,13 +137,6 @@ export function ClientDocumentSuite({
       printWindow.document.write(html)
       printWindow.document.close()
       printWindow.focus()
-      // Wait for fonts & layout to render then print
-      setTimeout(() => {
-        printWindow.print()
-      }, 500)
-    } else {
-      // Fallback if popup blocked
-      window.print()
     }
   }
 
@@ -166,7 +179,7 @@ export function ClientDocumentSuite({
         className="doc-modal-container"
         style={{
           width: '100%',
-          maxWidth: '1240px',
+          maxWidth: '1280px',
           height: '94vh',
           background: '#ffffff',
           border: '2px solid var(--ink)',
@@ -362,7 +375,7 @@ export function ClientDocumentSuite({
                   <button
                     onClick={() => setViewMode('preview')}
                     style={{
-                      padding: '4px 10px',
+                      padding: '5px 12px',
                       font: '700 10px "DM Mono", monospace',
                       background: viewMode === 'preview' ? 'var(--ink)' : '#fff',
                       color: viewMode === 'preview' ? 'var(--paper)' : 'var(--ink)',
@@ -370,12 +383,12 @@ export function ClientDocumentSuite({
                       cursor: 'pointer',
                     }}
                   >
-                    👁️ {isArabic ? 'معاينة التصميم (PDF Preview)' : 'Live PDF Preview'}
+                    👁️ {isArabic ? 'معاينة التصميم' : 'Live PDF Preview'}
                   </button>
                   <button
                     onClick={() => setViewMode('editor')}
                     style={{
-                      padding: '4px 10px',
+                      padding: '5px 12px',
                       font: '700 10px "DM Mono", monospace',
                       background: viewMode === 'editor' ? 'var(--ink)' : '#fff',
                       color: viewMode === 'editor' ? 'var(--paper)' : 'var(--ink)',
@@ -383,14 +396,16 @@ export function ClientDocumentSuite({
                       cursor: 'pointer',
                     }}
                   >
-                    ✍️ {isArabic ? 'تعديل المحتوى (Edit)' : 'Edit Text'}
+                    ✍️ {isArabic ? 'تعديل المحتوى' : 'Edit Text'}
                   </button>
                 </div>
               </div>
 
+              {/* Action Buttons: Real PDF Download, Print Tab, Copy, Email */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button
-                  onClick={handlePrintPdf}
+                  onClick={handleDownloadRealPdf}
+                  disabled={isDownloadingPdf}
                   className="button"
                   style={{
                     background: 'var(--red)',
@@ -404,9 +419,29 @@ export function ClientDocumentSuite({
                     alignItems: 'center',
                     gap: '6px',
                     boxShadow: '2px 2px 0 var(--ink)',
+                    cursor: isDownloadingPdf ? 'wait' : 'pointer',
                   }}
                 >
-                  🖨️ {isArabic ? 'تحميل / طباعة PDF' : 'Download / Print Styled PDF'}
+                  {isDownloadingPdf ? (
+                    <span>⏳ {isArabic ? 'جارٍ إنشاء وتحميل PDF…' : 'Generating PDF…'}</span>
+                  ) : (
+                    <span>⬇️ {isArabic ? 'تحميل ملف PDF (.pdf)' : 'Download PDF File (.pdf)'}</span>
+                  )}
+                </button>
+
+                <button
+                  onClick={handlePrintWindow}
+                  className="button"
+                  title="Open isolated printable view in new window"
+                  style={{
+                    background: '#fff',
+                    minHeight: '36px',
+                    padding: '0 12px',
+                    fontSize: '11px',
+                    fontFamily: '"DM Mono", monospace',
+                  }}
+                >
+                  🖨️ {isArabic ? 'طباعة' : 'Print Window'}
                 </button>
 
                 <button
@@ -458,187 +493,203 @@ export function ClientDocumentSuite({
             </div>
 
             {/* Document Content View: Preview Mode vs Editor Mode */}
-            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-              {viewMode === 'preview' ? (
-                /* LIVE STYLED PDF PREVIEW MATCHING WEBSITE EXACTLY */
-                <div style={{ flex: 1, padding: '32px 24px', overflowY: 'auto', background: '#f2efe8' }}>
+            <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+              {/* LIVE STYLED PDF PREVIEW CONTAINER (Used directly by html2pdf for perfect rendering) */}
+              <div
+                style={{
+                  flex: 1,
+                  padding: '32px 24px',
+                  overflowY: 'auto',
+                  background: '#f2efe8',
+                  display: viewMode === 'preview' ? 'block' : 'none',
+                }}
+              >
+                <div
+                  ref={pdfContainerRef}
+                  id="pdf-document-card"
+                  style={{
+                    maxWidth: '820px',
+                    margin: '0 auto',
+                    background: '#ffffff',
+                    border: '2px solid #171717',
+                    boxShadow: '8px 8px 0 #171717',
+                    overflow: 'visible',
+                  }}
+                >
+                  {/* Top Studio Header */}
                   <div
                     style={{
-                      maxWidth: '820px',
-                      margin: '0 auto',
-                      background: '#ffffff',
-                      border: '2px solid #171717',
-                      boxShadow: '8px 8px 0 #171717',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {/* Top Studio Header */}
-                    <div
-                      style={{
-                        background: '#171717',
-                        color: '#f2efe8',
-                        padding: '24px 32px',
-                        borderBottom: '4px solid #b52d20',
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: '16px',
-                      }}
-                    >
-                      <div>
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            background: '#f2efe8',
-                            color: '#171717',
-                            fontFamily: '"DM Mono", monospace',
-                            fontWeight: 700,
-                            fontSize: '13px',
-                            padding: '4px 10px',
-                            letterSpacing: '-0.04em',
-                            marginBottom: '4px',
-                          }}
-                        >
-                          WV / webviewlabs
-                        </div>
-                        <p
-                          style={{
-                            fontFamily: '"DM Mono", monospace',
-                            fontSize: '10px',
-                            color: '#aaa69d',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.1em',
-                            margin: 0,
-                          }}
-                        >
-                          Digital Studio for Ambitious Brands · Cairo / Everywhere
-                        </p>
-                      </div>
-                      <div
-                        style={{
-                          textAlign: 'right',
-                          fontFamily: '"DM Mono", monospace',
-                          fontSize: '11px',
-                          color: '#aaa69d',
-                          lineHeight: '1.5',
-                        }}
-                      >
-                        <div style={{ color: '#ffffff', fontWeight: 700, fontSize: '13px' }}>
-                          {isArabic ? activeDef.titleAr : activeDef.title}
-                        </div>
-                        <div>Ref: WV-{client.id}-{activeDef.key.toUpperCase()}</div>
-                        <div>Date: {new Date().toLocaleDateString('en-US', { dateStyle: 'medium' })}</div>
-                      </div>
-                    </div>
-
-                    {/* Document Inner Body */}
-                    <div style={{ padding: '36px 40px', background: '#ffffff' }}>
-                      {/* Client Badge Card */}
-                      <div
-                        style={{
-                          background: '#f8f6f2',
-                          border: '1px solid #c5c0b5',
-                          padding: '14px 20px',
-                          marginBottom: '28px',
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-                          gap: '12px',
-                        }}
-                      >
-                        <div>
-                          <div style={{ font: '10px "DM Mono", monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
-                            Client Name
-                          </div>
-                          <strong style={{ fontSize: '14px', color: '#171717' }}>{client.name}</strong>
-                        </div>
-                        <div>
-                          <div style={{ font: '10px "DM Mono", monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
-                            Company / Brand
-                          </div>
-                          <strong style={{ fontSize: '14px', color: '#b52d20' }}>{client.company}</strong>
-                        </div>
-                        <div>
-                          <div style={{ font: '10px "DM Mono", monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
-                            Phone
-                          </div>
-                          <strong style={{ fontSize: '14px', fontFamily: '"DM Mono", monospace' }}>{client.phone}</strong>
-                        </div>
-                        <div>
-                          <div style={{ font: '10px "DM Mono", monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
-                            Email
-                          </div>
-                          <div style={{ fontSize: '13px' }}>{client.email || 'Not provided'}</div>
-                        </div>
-                      </div>
-
-                      {/* Rendered HTML from Markdown */}
-                      <div
-                        className="rendered-doc-content"
-                        dangerouslySetInnerHTML={{ __html: renderedPreviewHtml }}
-                        style={{ lineHeight: '1.7', fontSize: '14px' }}
-                      />
-                    </div>
-
-                    {/* Studio Footer */}
-                    <div
-                      style={{
-                        background: '#171717',
-                        color: '#aaa69d',
-                        padding: '20px 32px',
-                        fontFamily: '"DM Mono", monospace',
-                        fontSize: '10px',
-                        textAlign: 'center',
-                        lineHeight: '1.6',
-                        borderTop: '3px solid #b52d20',
-                      }}
-                    >
-                      <div style={{ fontWeight: 'bold', color: '#f2efe8', marginBottom: '2px' }}>
-                        webviewlabs · Digital products with a point of view.
-                      </div>
-                      <div>
-                        Cairo, Egypt · <a href="https://webviewlabs.vercel.app" style={{ color: '#f2efe8', textDecoration: 'none' }}>webviewlabs.vercel.app</a> · <a href="mailto:hello@webviewlabs.com" style={{ color: '#f2efe8', textDecoration: 'none' }}>hello@webviewlabs.com</a>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                /* LIVE TEXT / MARKDOWN EDITOR */
-                <div style={{ flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-                  <div
-                    style={{
-                      font: '11px "DM Mono", monospace',
-                      color: 'var(--muted)',
-                      marginBottom: '8px',
+                      background: '#171717',
+                      color: '#f2efe8',
+                      padding: '24px 32px',
+                      borderBottom: '4px solid #b52d20',
                       display: 'flex',
+                      flexWrap: 'wrap',
                       justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: '16px',
                     }}
                   >
-                    <span>
-                      ✍️ {isArabic ? 'عدّل أي بند أو أسعار أو تواريخ مباشرة (الحفظ تلقائي):' : 'Edit any text, terms, prices, or dates directly (autosaves automatically):'}
-                    </span>
-                    <span>Character count: {currentText.length}</span>
+                    <div>
+                      <div
+                        style={{
+                          display: 'inline-block',
+                          background: '#f2efe8',
+                          color: '#171717',
+                          fontFamily: '"DM Mono", monospace',
+                          fontWeight: 700,
+                          fontSize: '13px',
+                          padding: '4px 10px',
+                          letterSpacing: '-0.04em',
+                          marginBottom: '4px',
+                        }}
+                      >
+                        WV / webviewlabs
+                      </div>
+                      <p
+                        style={{
+                          fontFamily: '"DM Mono", monospace',
+                          fontSize: '10px',
+                          color: '#aaa69d',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.1em',
+                          margin: 0,
+                        }}
+                      >
+                        Digital Studio for Ambitious Brands · Cairo / Everywhere
+                      </p>
+                    </div>
+                    <div
+                      style={{
+                        textAlign: isArabic ? 'left' : 'right',
+                        fontFamily: '"DM Mono", monospace',
+                        fontSize: '11px',
+                        color: '#aaa69d',
+                        lineHeight: '1.5',
+                      }}
+                    >
+                      <div style={{ color: '#ffffff', fontWeight: 700, fontSize: '13px' }}>
+                        {isArabic ? activeDef.titleAr : activeDef.title}
+                      </div>
+                      <div>Ref: WV-{client.id}-{activeDef.key.toUpperCase()}</div>
+                      <div>Date: {new Date().toLocaleDateString('en-US', { dateStyle: 'medium' })}</div>
+                    </div>
                   </div>
-                  <textarea
-                    value={currentText}
-                    onChange={(e) => handleContentChange(e.target.value)}
+
+                  {/* Document Inner Body */}
+                  <div style={{ padding: '36px 40px', background: '#ffffff' }}>
+                    {/* Client Badge Card */}
+                    <div
+                      style={{
+                        background: '#f8f6f2',
+                        border: '1px solid #c5c0b5',
+                        padding: '14px 20px',
+                        marginBottom: '28px',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                        gap: '12px',
+                      }}
+                    >
+                      <div>
+                        <div style={{ font: '10px "DM Mono", monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
+                          Client Name
+                        </div>
+                        <strong style={{ fontSize: '14px', color: '#171717' }}>{client.name}</strong>
+                      </div>
+                      <div>
+                        <div style={{ font: '10px "DM Mono", monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
+                          Company / Brand
+                        </div>
+                        <strong style={{ fontSize: '14px', color: '#b52d20' }}>{client.company}</strong>
+                      </div>
+                      <div>
+                        <div style={{ font: '10px "DM Mono", monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
+                          Phone
+                        </div>
+                        <strong style={{ fontSize: '14px', fontFamily: '"DM Mono", monospace' }}>{client.phone}</strong>
+                      </div>
+                      <div>
+                        <div style={{ font: '10px "DM Mono", monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
+                          Email
+                        </div>
+                        <div style={{ fontSize: '13px' }}>{client.email || 'Not provided'}</div>
+                      </div>
+                    </div>
+
+                    {/* Rendered HTML from Markdown */}
+                    <div
+                      className="rendered-doc-content"
+                      dangerouslySetInnerHTML={{ __html: renderedPreviewHtml }}
+                      style={{ lineHeight: '1.7', fontSize: '14px' }}
+                    />
+                  </div>
+
+                  {/* Studio Footer */}
+                  <div
                     style={{
-                      flex: 1,
-                      minHeight: '450px',
-                      padding: '20px',
+                      background: '#171717',
+                      color: '#aaa69d',
+                      padding: '20px 32px',
                       fontFamily: '"DM Mono", monospace',
-                      fontSize: '13px',
-                      lineHeight: '1.7',
-                      background: '#fcfbfa',
-                      border: '1px solid var(--line)',
-                      color: 'var(--ink)',
-                      outline: 'none',
-                      resize: 'none',
-                      boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.05)',
+                      fontSize: '10px',
+                      textAlign: 'center',
+                      lineHeight: '1.6',
+                      borderTop: '3px solid #b52d20',
                     }}
-                  />
+                  >
+                    <div style={{ fontWeight: 'bold', color: '#f2efe8', marginBottom: '2px' }}>
+                      webviewlabs · Digital products with a point of view.
+                    </div>
+                    <div>
+                      Cairo, Egypt · <a href="https://webviewlabs.vercel.app" style={{ color: '#f2efe8', textDecoration: 'none' }}>webviewlabs.vercel.app</a> · <a href="mailto:hello@webviewlabs.com" style={{ color: '#f2efe8', textDecoration: 'none' }}>hello@webviewlabs.com</a>
+                    </div>
+                  </div>
                 </div>
-              )}
+              </div>
+
+              {/* LIVE TEXT / MARKDOWN EDITOR */}
+              <div
+                style={{
+                  flex: 1,
+                  padding: '20px',
+                  overflowY: 'auto',
+                  display: viewMode === 'editor' ? 'flex' : 'none',
+                  flexDirection: 'column',
+                }}
+              >
+                <div
+                  style={{
+                    font: '11px "DM Mono", monospace',
+                    color: 'var(--muted)',
+                    marginBottom: '8px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span>
+                    ✍️ {isArabic ? 'عدّل أي بند أو أسعار أو تواريخ مباشرة (الحفظ تلقائي):' : 'Edit any text, terms, prices, or dates directly (autosaves automatically):'}
+                  </span>
+                  <span>Character count: {currentText.length}</span>
+                </div>
+                <textarea
+                  value={currentText}
+                  onChange={(e) => handleContentChange(e.target.value)}
+                  style={{
+                    flex: 1,
+                    minHeight: '450px',
+                    padding: '20px',
+                    fontFamily: '"DM Mono", monospace',
+                    fontSize: '13px',
+                    lineHeight: '1.7',
+                    background: '#fcfbfa',
+                    border: '1px solid var(--line)',
+                    color: 'var(--ink)',
+                    outline: 'none',
+                    resize: 'none',
+                    boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.05)',
+                  }}
+                />
+              </div>
             </div>
           </div>
         </div>
