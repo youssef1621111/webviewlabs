@@ -79,6 +79,9 @@ function generateWebviewLabsEmailHtml(data: ContactSubmission): string {
           <h3 style="font-size: 14px; text-transform: uppercase; color: #171717; margin-bottom: 8px;">Project Scope:</h3>
           <p style="background: #fdfcfb; border-left: 3px solid #b52d20; padding: 12px 16px; margin: 0;">${safeBrief}</p>
         </div>
+        <div style="margin-top: 24px; text-align: center;">
+          <a href="https://webviewlabs.vercel.app/admin?view=crm" style="background: #171717; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 12px; font-weight: bold; display: inline-block;">Open in Studio CRM & Pipeline →</a>
+        </div>
       </div>
       <div class="footer">
         webviewlabs · Cairo, Egypt · <a href="https://webviewlabs.vercel.app" style="color: #f2efe8;">webviewlabs.vercel.app</a>
@@ -111,10 +114,10 @@ Deno.serve(async (req: Request) => {
     let phoneSent = false
     let emailStatus = "pending"
 
-    const brevoApiKey = Deno.env.get("BREVO_API_KEY") || "xsmtpsib-81585ab5f71330154206b48168d56e0719fd0bbb65f4dcbf7d12eed81ceddbf4-cDWZiRoKI1rGo5ZK"
+    const brevoApiKey = Deno.env.get("BREVO_API_KEY") || "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"
     const resendApiKey = Deno.env.get("RESEND_API_KEY") || "re_XXFoB3jY_3DYaLo2FFS8rhfDLqYsZ8HNB"
 
-    // 1. Send Email via Brevo REST API
+    // 1. Send Email via Brevo REST API v3
     if (brevoApiKey && payload.email) {
       try {
         const brevoRes = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -133,6 +136,8 @@ Deno.serve(async (req: Request) => {
         if (brevoRes.ok) {
           emailSent = true
           emailStatus = "sent_via_brevo"
+        } else {
+          console.warn("Brevo API response:", await brevoRes.text())
         }
       } catch (e: any) {
         console.warn("Brevo email note:", e.message)
