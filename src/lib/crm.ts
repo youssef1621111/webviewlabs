@@ -54,6 +54,13 @@ export type DealWithRelations = Deal & {
   transactions?: Transaction[]
 }
 
+export type DealFilterTab =
+  | 'all'
+  | 'deposit_paid'
+  | 'awaiting_deposit'
+  | 'paid_in_full'
+  | 'completed_and_paid'
+
 // Default tasks auto-created when deal moves to in_progress
 export const DEFAULT_TASKS: Omit<Task, 'id' | 'deal_id' | 'created_at'>[] = [
   // Build
@@ -77,34 +84,115 @@ export const DEFAULT_TASKS: Omit<Task, 'id' | 'deal_id' | 'created_at'>[] = [
 ]
 
 // Financial helpers
-export function calcDealFinancials(deal: Deal, transactions: Transaction[]) {
+export function calcDealFinancials(deal: Deal | DealWithRelations, transactions: Transaction[], tasks?: Task[]) {
   const dealTx = transactions.filter((t) => t.deal_id === deal.id)
-  const cashIn = dealTx.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const cashOut = dealTx.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-  const totalExpenses = deal.expenses + cashOut
+  const incomeTx = dealTx.filter((t) => t.type === 'income')
+  const expenseTx = dealTx.filter((t) => t.type === 'expense')
+
+  const cashIn = incomeTx.reduce((s, t) => s + t.amount, 0)
+  const cashOut = expenseTx.reduce((s, t) => s + t.amount, 0)
+  const totalExpenses = (deal.expenses || 0) + cashOut
   const netProfit = cashIn - totalExpenses
   const margin = cashIn > 0 ? Math.round((netProfit / cashIn) * 100) : 0
-  const depositDue = !deal.deposit_paid_at ? deal.deposit_amount : 0
-  const finalDue = !deal.final_paid_at ? deal.final_amount : 0
-  return { cashIn, totalExpenses, netProfit, margin, depositDue, finalDue }
+
+  const totalPrice = deal.total_value || 0
+  const leftToPay = Math.max(0, totalPrice - cashIn)
+  const pctPaid = totalPrice > 0 ? Math.min(100, Math.round((cashIn / totalPrice) * 100)) : (cashIn > 0 ? 100 : 0)
+  
+  const isFullyPaid = totalPrice > 0 ? cashIn >= totalPrice : (cashIn > 0 && !!deal.final_paid_at)
+  const hasDepositPaid = cashIn > 0 && !isFullyPaid
+  const isAwaitingDeposit = cashIn === 0 && !deal.deposit_paid_at
+
+  const proofCount = incomeTx.filter((t) => !!t.proof_url).length
+  const proofs = incomeTx.filter((t) => !!t.proof_url).map((t) => ({
+    label: t.label,
+    amount: t.amount,
+    date: t.paid_at,
+    url: t.proof_url as string,
+    source: t.source,
+  }))
+
+  const dealTasks = tasks || dealWithTasks(deal)
+  const totalTasks = dealTasks.length
+  const doneTasks = dealTasks.filter((t) => t.status === 'done').length
+  const isWorkFinished = (totalTasks > 0 && doneTasks === totalTasks) || ('submission' in deal && deal.submission?.status === 'finished')
+
+
+  return {
+    cashIn,
+    cashOut,
+    totalExpenses,
+    netProfit,
+    margin,
+    totalPrice,
+    leftToPay,
+    pctPaid,
+    isFullyPaid,
+    hasDepositPaid,
+    isAwaitingDeposit,
+    proofCount,
+    proofs,
+    dealTx,
+    incomeTx,
+    expenseTx,
+    totalTasks,
+    doneTasks,
+    isWorkFinished,
+    isCompletedAndPaid: isWorkFinished && isFullyPaid,
+  }
 }
 
-export function calcStudioTotals(deals: Deal[], allTransactions: Transaction[]) {
+function dealWithTasks(deal: any): Task[] {
+  return Array.isArray(deal.tasks) ? deal.tasks : []
+}
+
+export function calcStudioTotals(deals: Deal[], allTransactions: Transaction[], tasksMap: Record<string, Task[]> = {}) {
   const cashIn = allTransactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const expenses = allTransactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+  const expenses = allTransactions.filter((t) => t.type === 'expense').reduce((s, t) => s + (t.amount || 0), 0)
   const netProfit = cashIn - expenses
   const margin = cashIn > 0 ? Math.round((netProfit / cashIn) * 100) : 0
 
-  const activeDeals = deals.filter((d) => d.submission_id) // all deals
-  const billed = activeDeals.reduce((s, d) => s + d.total_value, 0)
+  const activeDeals = deals.filter((d) => d.submission_id)
+  const billed = activeDeals.reduce((s, d) => s + (d.total_value || 0), 0)
 
-  const awaited = activeDeals.reduce((s, d) => {
-    const depositPending = !d.deposit_paid_at ? d.deposit_amount : 0
-    const finalPending = !d.final_paid_at ? d.final_amount : 0
-    return s + depositPending + finalPending
-  }, 0)
+  let totalLeftToPay = 0
+  let totalDepositsCollected = 0
+  let awaitingDepositCount = 0
+  let depositPaidCount = 0
+  let fullyPaidCount = 0
+  let completedAndPaidCount = 0
 
-  return { cashIn, expenses, netProfit, margin, billed, awaited }
+  for (const deal of activeDeals) {
+    const fin = calcDealFinancials(deal, allTransactions, tasksMap[deal.id])
+    totalLeftToPay += fin.leftToPay
+    if (fin.hasDepositPaid) {
+      totalDepositsCollected += fin.cashIn
+      depositPaidCount++
+    } else if (fin.isAwaitingDeposit) {
+      awaitingDepositCount++
+    }
+    if (fin.isFullyPaid) {
+      fullyPaidCount++
+    }
+    if (fin.isCompletedAndPaid) {
+      completedAndPaidCount++
+    }
+  }
+
+  return {
+    cashIn,
+    expenses,
+    netProfit,
+    margin,
+    billed,
+    totalLeftToPay,
+    totalDepositsCollected,
+    awaitingDepositCount,
+    depositPaidCount,
+    fullyPaidCount,
+    completedAndPaidCount,
+    activeDealsCount: activeDeals.length,
+  }
 }
 
 export function fmt(amount: number): string {

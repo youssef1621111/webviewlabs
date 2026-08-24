@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import type { Deal, Transaction, DealWithRelations } from '../lib/crm'
+import { useState, useEffect, useRef } from 'react'
+import type { Deal, Transaction, DealWithRelations, Task, DealFilterTab } from '../lib/crm'
 import { calcStudioTotals, calcDealFinancials, fmt, DEFAULT_TASKS } from '../lib/crm'
 import { AiAnalyst } from './AiAnalyst'
 import type { Locale } from '../types'
@@ -13,6 +13,7 @@ async function dbGet(path: string) {
   })
   return res.json()
 }
+
 async function dbPost(table: string, body: any) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: 'POST',
@@ -26,6 +27,7 @@ async function dbPost(table: string, body: any) {
   })
   return res.json()
 }
+
 async function dbPatch(table: string, id: string, body: any) {
   await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
     method: 'PATCH',
@@ -38,10 +40,43 @@ async function dbPatch(table: string, id: string, body: any) {
     body: JSON.stringify(body),
   })
 }
+
 async function dbDelete(table: string, id: string) {
   await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
     method: 'DELETE',
     headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+  })
+}
+
+/**
+ * Upload image file to Supabase storage 'receipts' bucket or fallback to Base64 Data URL
+ */
+async function uploadProofFile(file: File): Promise<string> {
+  try {
+    const ext = file.name.split('.').pop() || 'png'
+    const fileName = `receipt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/receipts/${fileName}`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': file.type || 'image/png',
+      },
+      body: file,
+    })
+    if (res.ok) {
+      return `${SUPABASE_URL}/storage/v1/object/public/receipts/${fileName}`
+    }
+  } catch {
+    // Fallback to data URL
+  }
+
+  // Fallback: convert file to compressed base64 data URL
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = (e) => reject(e)
+    reader.readAsDataURL(file)
   })
 }
 
@@ -51,13 +86,20 @@ export function CrmDashboard({ locale }: Props) {
   const isAr = locale === 'ar'
   const [deals, setDeals] = useState<DealWithRelations[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [tasksMap, setTasksMap] = useState<Record<string, Task[]>>({})
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'overview' | 'deals' | 'cash' | 'deal' | 'ai'>('overview')
   const [activeDealId, setActiveDealId] = useState<string | null>(null)
-  const [dealTab, setDealTab] = useState<'financials' | 'tasks'>('financials')
+  const [dealTab, setDealTab] = useState<'financials' | 'tasks'>('tasks')
+  const [dealFilter, setDealFilter] = useState<DealFilterTab>('all')
 
+  // Payment Recording Modal
+  const [paymentModalDeal, setPaymentModalDeal] = useState<DealWithRelations | null>(null)
+  
+  // Proof Lightbox
+  const [viewingProof, setViewingProof] = useState<{ url: string; title: string; amount?: number; date?: string; source?: string } | null>(null)
 
-  // New transaction form state
+  // Transaction form state (Ledger tab)
   const [txForm, setTxForm] = useState({
     deal_id: '',
     type: 'income' as 'income' | 'expense',
@@ -65,29 +107,41 @@ export function CrmDashboard({ locale }: Props) {
     amount: '',
     paid_at: new Date().toISOString().split('T')[0],
     source: 'InstaPay',
+    proof_url: '',
   })
+  const [txProofPreview, setTxProofPreview] = useState<string | null>(null)
   const [txLoading, setTxLoading] = useState(false)
   const [toast, setToast] = useState('')
 
   function showToast(msg: string) {
     setToast(msg)
-    setTimeout(() => setToast(''), 3000)
+    setTimeout(() => setToast(''), 3500)
   }
 
   async function load() {
     setLoading(true)
     try {
-      const [dealsData, txData, subsData] = await Promise.all([
+      const [dealsData, txData, subsData, allTasks] = await Promise.all([
         dbGet('deals?select=*&order=created_at.desc'),
         dbGet('transactions?select=*&order=paid_at.desc'),
         dbGet('contact_submissions?select=id,name,company,phone,email,status'),
+        dbGet('tasks?select=*&order=sort_order.asc'),
       ])
-      // Join submissions info onto deals
+
       const subMap: Record<number, any> = {}
       ;(Array.isArray(subsData) ? subsData : []).forEach((s: any) => { subMap[s.id] = s })
+
+      const tMap: Record<string, Task[]> = {}
+      ;(Array.isArray(allTasks) ? allTasks : []).forEach((t: Task) => {
+        if (!tMap[t.deal_id]) tMap[t.deal_id] = []
+        tMap[t.deal_id].push(t)
+      })
+      setTasksMap(tMap)
+
       const enriched: DealWithRelations[] = (Array.isArray(dealsData) ? dealsData : []).map((d: Deal) => ({
         ...d,
         submission: subMap[d.submission_id],
+        tasks: tMap[d.id] || [],
       }))
       setDeals(enriched)
       setTransactions(Array.isArray(txData) ? txData : [])
@@ -98,39 +152,8 @@ export function CrmDashboard({ locale }: Props) {
 
   useEffect(() => { load() }, [])
 
-  const totals = calcStudioTotals(deals, transactions)
+  const totals = calcStudioTotals(deals, transactions, tasksMap)
   const activeDeal = deals.find((d) => d.id === activeDealId) || null
-
-  async function markDepositReceived(deal: DealWithRelations) {
-    const now = new Date().toISOString()
-    await dbPatch('deals', deal.id, { deposit_paid_at: now })
-    // Also log transaction
-    await dbPost('transactions', {
-      deal_id: deal.id,
-      type: 'income',
-      label: `Deposit 50% — ${deal.submission?.company || deal.deal_title}`,
-      amount: deal.deposit_amount,
-      paid_at: now.split('T')[0],
-      source: 'InstaPay',
-    })
-    showToast('✓ Deposit marked received & logged in ledger')
-    load()
-  }
-
-  async function markFinalReceived(deal: DealWithRelations) {
-    const now = new Date().toISOString()
-    await dbPatch('deals', deal.id, { final_paid_at: now })
-    await dbPost('transactions', {
-      deal_id: deal.id,
-      type: 'income',
-      label: `Final Balance 50% — ${deal.submission?.company || deal.deal_title}`,
-      amount: deal.final_amount,
-      paid_at: now.split('T')[0],
-      source: 'InstaPay',
-    })
-    showToast('🎉 Final payment received & logged!')
-    load()
-  }
 
   async function addTransaction() {
     if (!txForm.label || !txForm.amount) return
@@ -142,21 +165,34 @@ export function CrmDashboard({ locale }: Props) {
       amount: parseFloat(txForm.amount),
       paid_at: txForm.paid_at,
       source: txForm.source,
+      proof_url: txForm.proof_url || null,
     })
-    setTxForm((p) => ({ ...p, label: '', amount: '' }))
+    setTxForm((p) => ({ ...p, label: '', amount: '', proof_url: '' }))
+    setTxProofPreview(null)
     setTxLoading(false)
-    showToast('✓ Transaction logged')
+    showToast('✓ Transaction logged in ledger')
     load()
   }
 
   async function deleteTransaction(id: string) {
     if (!confirm('Delete this transaction?')) return
     await dbDelete('transactions', id)
+    showToast('Transaction deleted')
     load()
   }
 
-  // Summary cards
-  function SummaryCard({ label, value, color, sub }: { label: string; value: string; color: string; sub?: string }) {
+  // Segmented deals filtering
+  const filteredDeals = deals.filter((deal) => {
+    const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id])
+    if (dealFilter === 'deposit_paid') return fin.hasDepositPaid
+    if (dealFilter === 'awaiting_deposit') return fin.isAwaitingDeposit
+    if (dealFilter === 'paid_in_full') return fin.isFullyPaid
+    if (dealFilter === 'completed_and_paid') return fin.isCompletedAndPaid
+    return true
+  })
+
+  // Summary Card Helper
+  function SummaryCard({ label, value, color, sub, badge }: { label: string; value: string; color: string; sub?: string; badge?: string }) {
     return (
       <div
         style={{
@@ -165,18 +201,30 @@ export function CrmDashboard({ locale }: Props) {
           boxShadow: `4px 4px 0 ${color}`,
           padding: '20px 24px',
           minWidth: 0,
+          position: 'relative',
         }}
       >
+        {badge && (
+          <span
+            style={{
+              position: 'absolute', top: 10, right: 12,
+              background: color, color: '#fff', padding: '2px 8px',
+              font: '700 9px "DM Mono",monospace', textTransform: 'uppercase',
+            }}
+          >
+            {badge}
+          </span>
+        )}
         <div style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54', letterSpacing: '0.08em' }}>
           {label}
         </div>
-        <div style={{ font: `700 28px "DM Mono",monospace`, color, marginTop: '6px' }}>{value}</div>
+        <div style={{ font: `700 26px "DM Mono",monospace`, color, marginTop: '6px' }}>{value}</div>
         {sub && <div style={{ font: '11px "DM Mono",monospace', color: '#5d5a54', marginTop: '4px' }}>{sub}</div>}
       </div>
     )
   }
 
-  // Nav pill
+  // Top Nav Button Helper
   function NavBtn({ id, label, current }: { id: typeof view; label: string; current: typeof view }) {
     return (
       <button
@@ -214,19 +262,29 @@ export function CrmDashboard({ locale }: Props) {
         )}
 
         {/* CRM Header */}
-        <div style={{ marginBottom: '32px' }}>
-          <span className="eyebrow">WV / Studio CRM</span>
-          <h1 style={{ fontSize: 'clamp(28px,4vw,46px)', marginTop: '8px' }}>
-            {isAr ? 'نظام إدارة العملاء والخزينة' : 'Client & Cash Management'}
-          </h1>
+        <div style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+          <div>
+            <span className="eyebrow">WV / Studio CRM & Cash Drawer</span>
+            <h1 style={{ fontSize: 'clamp(28px,4vw,46px)', marginTop: '8px' }}>
+              {isAr ? 'إدارة العملاء والخزينة والمستحقات' : 'Client Ledger & Receivables'}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <div style={{ background: '#f8f6f2', border: '1px solid #c5c0b5', padding: '8px 14px', font: '11px "DM Mono",monospace' }}>
+              <span>💰 In Drawer: <strong>{fmt(totals.cashIn)}</strong></span>
+              <span style={{ margin: '0 8px', color: '#c5c0b5' }}>|</span>
+              <span style={{ color: '#b52d20' }}>⏳ Left to Pay: <strong>{fmt(totals.totalLeftToPay)}</strong></span>
+            </div>
+          </div>
         </div>
 
-        {/* CRM Nav */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '36px', flexWrap: 'wrap' }}>
+        {/* CRM Navigation Tabs */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '36px', flexWrap: 'wrap', alignItems: 'center' }}>
           <NavBtn id="overview" label="💰 Cash Overview" current={view} />
-          <NavBtn id="deals" label="📁 All Deals" current={view} />
+          <NavBtn id="deals" label={`📁 All Deals (${deals.length})`} current={view} />
           <NavBtn id="cash" label="📒 Ledger / Transactions" current={view} />
-          {/* AI Analyst Tab — special styling */}
+          
+          {/* AI Analyst Button */}
           <button
             onClick={() => setView('ai')}
             style={{
@@ -242,11 +300,12 @@ export function CrmDashboard({ locale }: Props) {
               gap: '6px',
             }}
           >
-            🤖 AI Analyst
+            🤖 AI CFO
             <span style={{ background: view === 'ai' ? 'rgba(255,255,255,0.3)' : '#b52d20', color: '#fff', fontSize: '9px', padding: '1px 5px', borderRadius: '8px' }}>
               NVIDIA
             </span>
           </button>
+
           <button
             onClick={load}
             style={{
@@ -258,157 +317,169 @@ export function CrmDashboard({ locale }: Props) {
           </button>
         </div>
 
-        {/* ═══════════════════ AI ANALYST ═══════════════════ */}
+        {/* ═══════════════════ AI ANALYST TAB ═══════════════════ */}
         {view === 'ai' && (
-          <AiAnalyst deals={deals} transactions={transactions} locale={locale} />
+          <AiAnalyst deals={deals} transactions={transactions} tasksMap={tasksMap} locale={locale} />
         )}
 
-        {/* ═══════════════════ OVERVIEW ═══════════════════ */}
+        {/* ═══════════════════ OVERVIEW TAB ═══════════════════ */}
         {view === 'overview' && (
           <div>
-            {/* Summary Cards */}
+            {/* Top Metrics Cards */}
             <div
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                gap: '20px',
-                marginBottom: '40px',
+                gap: '18px',
+                marginBottom: '36px',
               }}
             >
-              <SummaryCard label="💰 Cash In Drawer" value={fmt(totals.cashIn)} color="#25D366" sub="All income received" />
-              <SummaryCard label="⏳ Awaited" value={fmt(totals.awaited)} color="#1d70b8" sub="Deposits + finals due" />
-              <SummaryCard label="📊 Total Billed" value={fmt(totals.billed)} color="#171717" sub="All active deal values" />
-              <SummaryCard label="💸 Expenses" value={fmt(totals.expenses)} color="#b52d20" sub="Total costs logged" />
+              <SummaryCard label="💰 Cash In Drawer" value={fmt(totals.cashIn)} color="#25D366" sub="All received income" badge="In Drawer" />
+              <SummaryCard label="⏳ Left to Pay (Receivables)" value={fmt(totals.totalLeftToPay)} color="#f59e0b" sub="Uncollected balances" badge="Due" />
+              <SummaryCard label="📊 Total Contracted" value={fmt(totals.billed)} color="#171717" sub="All deal full prices" />
+              <SummaryCard label="💸 Expenses Logged" value={fmt(totals.expenses)} color="#b52d20" sub="Total studio costs" />
               <SummaryCard
                 label="🏦 Net Profit"
                 value={fmt(totals.netProfit)}
                 color={totals.netProfit >= 0 ? '#8b5cf6' : '#b52d20'}
-                sub={`${totals.margin}% margin`}
+                sub={`${totals.margin}% net margin`}
               />
             </div>
 
-            {/* Per-deal money rows */}
-            <h2 style={{ font: '700 14px "DM Mono",monospace', textTransform: 'uppercase', marginBottom: '16px', color: '#5d5a54' }}>
-              Active Deals — Financial Breakdown
-            </h2>
+            {/* Segmentation Quick Bar */}
+            <div
+              style={{
+                background: '#f8f6f2',
+                border: '1px solid #c5c0b5',
+                padding: '16px 20px',
+                marginBottom: '32px',
+                display: 'flex',
+                gap: '16px',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+              }}
+            >
+              <span style={{ font: '700 11px "DM Mono",monospace', textTransform: 'uppercase', color: '#171717' }}>
+                Pipeline Distribution:
+              </span>
+              <button
+                onClick={() => { setDealFilter('deposit_paid'); setView('deals') }}
+                style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac', padding: '4px 10px', font: '700 11px "DM Mono",monospace', cursor: 'pointer' }}
+              >
+                💰 Deposit Paid ({totals.depositPaidCount})
+              </button>
+              <button
+                onClick={() => { setDealFilter('awaiting_deposit'); setView('deals') }}
+                style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', padding: '4px 10px', font: '700 11px "DM Mono",monospace', cursor: 'pointer' }}
+              >
+                ⏳ Awaiting Deposit ({totals.awaitingDepositCount})
+              </button>
+              <button
+                onClick={() => { setDealFilter('paid_in_full'); setView('deals') }}
+                style={{ background: '#e0e7ff', color: '#3730a3', border: '1px solid #c7d2fe', padding: '4px 10px', font: '700 11px "DM Mono",monospace', cursor: 'pointer' }}
+              >
+                💎 100% Paid in Full ({totals.fullyPaidCount})
+              </button>
+              <button
+                onClick={() => { setDealFilter('completed_and_paid'); setView('deals') }}
+                style={{ background: '#f3e8ff', color: '#6b21a8', border: '1px solid #e9d5ff', padding: '4px 10px', font: '700 11px "DM Mono",monospace', cursor: 'pointer' }}
+              >
+                🎉 100% Completed & Paid ({totals.completedAndPaidCount})
+              </button>
+            </div>
+
+            {/* Active Deals Summary */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ font: '700 13px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54', margin: 0 }}>
+                Active Deals — Price & Balance Breakdown
+              </h2>
+              <button
+                onClick={() => { setDealFilter('all'); setView('deals') }}
+                style={{ font: '700 11px "DM Mono",monospace', background: 'none', border: 'none', color: '#b52d20', cursor: 'pointer' }}
+              >
+                View segmented deals list →
+              </button>
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {deals.length === 0 && !loading && (
                 <div style={{ padding: '40px', textAlign: 'center', background: '#fff', border: '1px solid #e8e3d9', color: '#5d5a54', font: '13px "DM Mono",monospace' }}>
-                  No deals yet. Create deals from the pipeline by clicking "Open in CRM" on a client card.
+                  No deals yet. Open a client in the Pipeline and click "Open in CRM".
                 </div>
               )}
               {deals.map((deal) => {
-                const fin = calcDealFinancials(deal, transactions)
+                const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id])
                 return (
-                  <div
+                  <DealCardItem
                     key={deal.id}
-                    style={{
-                      background: '#fff',
-                      border: '2px solid #171717',
-                      boxShadow: '6px 6px 0 #171717',
-                      padding: '22px 26px',
-                    }}
-                  >
-                    {/* Deal Header */}
-                    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '12px', marginBottom: '16px' }}>
-                      <div>
-                        <div style={{ font: '700 16px "DM Sans",sans-serif' }}>
-                          {deal.submission?.company || '—'} · <span style={{ color: '#b52d20' }}>{deal.deal_title || 'Unnamed Deal'}</span>
-                        </div>
-                        <div style={{ font: '11px "DM Mono",monospace', color: '#5d5a54', marginTop: '2px' }}>
-                          Client: {deal.submission?.name || '—'} · {deal.submission?.phone || '—'}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => { setActiveDealId(deal.id); setView('deal') }}
-                        style={{
-                          padding: '6px 14px', font: '700 11px "DM Mono",monospace', cursor: 'pointer',
-                          background: '#171717', color: '#f2efe8', border: '1px solid #171717',
-                        }}
-                      >
-                        Open Deal →
-                      </button>
-                    </div>
-
-                    {/* Money Grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px' }}>
-                      <div>
-                        <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>Total Value</div>
-                        <div style={{ font: '700 18px "DM Mono",monospace' }}>{fmt(deal.total_value)}</div>
-                      </div>
-                      <div>
-                        <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>Deposit 50%</div>
-                        <div style={{ font: '700 16px "DM Mono",monospace', color: deal.deposit_paid_at ? '#25D366' : '#b52d20' }}>
-                          {fmt(deal.deposit_amount)}
-                        </div>
-                        <div style={{ font: '10px "DM Mono",monospace', color: deal.deposit_paid_at ? '#25D366' : '#aaa' }}>
-                          {deal.deposit_paid_at ? `✓ Received ${new Date(deal.deposit_paid_at).toLocaleDateString()}` : '⏳ Pending'}
-                        </div>
-                        {!deal.deposit_paid_at && deal.deposit_amount > 0 && (
-                          <button
-                            onClick={() => markDepositReceived(deal)}
-                            style={{
-                              marginTop: '6px', padding: '4px 10px', font: '700 10px "DM Mono",monospace',
-                              background: '#25D366', color: '#fff', border: 'none', cursor: 'pointer',
-                            }}
-                          >
-                            ✓ Mark Received
-                          </button>
-                        )}
-                      </div>
-                      <div>
-                        <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>Final 50%</div>
-                        <div style={{ font: '700 16px "DM Mono",monospace', color: deal.final_paid_at ? '#25D366' : '#b52d20' }}>
-                          {fmt(deal.final_amount)}
-                        </div>
-                        <div style={{ font: '10px "DM Mono",monospace', color: deal.final_paid_at ? '#25D366' : '#aaa' }}>
-                          {deal.final_paid_at ? `✓ Received ${new Date(deal.final_paid_at).toLocaleDateString()}` : '⏳ Pending'}
-                        </div>
-                        {!deal.final_paid_at && deal.final_amount > 0 && (
-                          <button
-                            onClick={() => markFinalReceived(deal)}
-                            style={{
-                              marginTop: '6px', padding: '4px 10px', font: '700 10px "DM Mono",monospace',
-                              background: '#8b5cf6', color: '#fff', border: 'none', cursor: 'pointer',
-                            }}
-                          >
-                            🎉 Mark Final Received
-                          </button>
-                        )}
-                      </div>
-                      <div>
-                        <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>Expenses</div>
-                        <div style={{ font: '700 16px "DM Mono",monospace', color: '#b52d20' }}>{fmt(fin.totalExpenses)}</div>
-                      </div>
-                      <div>
-                        <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>Net Profit</div>
-                        <div style={{ font: '700 18px "DM Mono",monospace', color: fin.netProfit >= 0 ? '#8b5cf6' : '#b52d20' }}>
-                          {fmt(fin.netProfit)} <span style={{ fontSize: '11px', opacity: 0.7 }}>({fin.margin}%)</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                    deal={deal}
+                    fin={fin}
+                    onOpen={() => { setActiveDealId(deal.id); setView('deal') }}
+                    onReceivePayment={() => setPaymentModalDeal(deal)}
+                    onViewProof={(proof) => setViewingProof(proof)}
+                  />
                 )
               })}
             </div>
           </div>
         )}
 
-        {/* ═══════════════════ ALL DEALS LIST ═══════════════════ */}
+        {/* ═══════════════════ ALL DEALS LIST TAB ═══════════════════ */}
         {view === 'deals' && (
-          <DealsListView
-            deals={deals}
-            transactions={transactions}
-            loading={loading}
-            isAr={isAr}
-            onOpenDeal={(id) => { setActiveDealId(id); setView('deal') }}
-            onMarkDeposit={markDepositReceived}
-            onMarkFinal={markFinalReceived}
-            onReload={load}
-          />
+          <div>
+            {/* Segmented Filter Subtabs */}
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '24px', flexWrap: 'wrap' }}>
+              {[
+                { key: 'all' as DealFilterTab, label: `🌟 All Deals (${deals.length})` },
+                { key: 'deposit_paid' as DealFilterTab, label: `💰 Deposit Paid / Balance Due (${totals.depositPaidCount})` },
+                { key: 'awaiting_deposit' as DealFilterTab, label: `⏳ Awaiting Deposit (${totals.awaitingDepositCount})` },
+                { key: 'paid_in_full' as DealFilterTab, label: `💎 100% Paid in Full (${totals.fullyPaidCount})` },
+                { key: 'completed_and_paid' as DealFilterTab, label: `🎉 100% Completed & Paid (${totals.completedAndPaidCount})` },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setDealFilter(tab.key)}
+                  style={{
+                    padding: '8px 14px',
+                    font: '700 11px "DM Mono",monospace',
+                    textTransform: 'uppercase',
+                    background: dealFilter === tab.key ? '#171717' : '#fff',
+                    color: dealFilter === tab.key ? '#f2efe8' : '#171717',
+                    border: '1px solid #171717',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Filtered Deals List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {loading && <p style={{ font: '13px "DM Mono",monospace', color: '#5d5a54' }}>Loading deals…</p>}
+              {!loading && filteredDeals.length === 0 && (
+                <div style={{ padding: '48px', textAlign: 'center', background: '#fff', border: '1px solid #e8e3d9', font: '13px "DM Mono",monospace', color: '#5d5a54' }}>
+                  No deals match this category filter.
+                </div>
+              )}
+              {filteredDeals.map((deal) => {
+                const fin = calcDealFinancials(deal, transactions, tasksMap[deal.id])
+                return (
+                  <DealCardItem
+                    key={deal.id}
+                    deal={deal}
+                    fin={fin}
+                    onOpen={() => { setActiveDealId(deal.id); setView('deal') }}
+                    onReceivePayment={() => setPaymentModalDeal(deal)}
+                    onViewProof={(proof) => setViewingProof(proof)}
+                  />
+                )
+              })}
+            </div>
+          </div>
         )}
 
-        {/* ═══════════════════ CASH LEDGER ═══════════════════ */}
+        {/* ═══════════════════ CASH LEDGER / TRANSACTIONS TAB ═══════════════════ */}
         {view === 'cash' && (
           <CashLedgerView
             deals={deals}
@@ -416,262 +487,603 @@ export function CrmDashboard({ locale }: Props) {
             isAr={isAr}
             txForm={txForm}
             setTxForm={setTxForm}
+            txProofPreview={txProofPreview}
+            setTxProofPreview={setTxProofPreview}
             txLoading={txLoading}
             onAddTransaction={addTransaction}
             onDeleteTransaction={deleteTransaction}
+            onViewProof={(proof) => setViewingProof(proof)}
           />
         )}
 
-        {/* ═══════════════════ SINGLE DEAL VIEW ═══════════════════ */}
+        {/* ═══════════════════ SINGLE DEAL VIEW (Tasks & Financials) ═══════════════════ */}
         {view === 'deal' && activeDeal && (
           <DealDetailView
             deal={activeDeal}
             transactions={transactions.filter((t) => t.deal_id === activeDeal.id)}
+            tasks={tasksMap[activeDeal.id] || []}
             isAr={isAr}
             tab={dealTab}
             setTab={setDealTab}
-            onBack={() => setView('overview')}
+            onBack={() => setView('deals')}
             onReload={load}
             showToast={showToast}
+            onReceivePayment={() => setPaymentModalDeal(activeDeal)}
+            onViewProof={(proof) => setViewingProof(proof)}
           />
         )}
+
+        {/* ═══════════════════ RECEIVE PAYMENT MODAL (WITH SCREENSHOT PROOF) ═══════════════════ */}
+        {paymentModalDeal && (
+          <ReceivePaymentModal
+            deal={paymentModalDeal}
+            currentFin={calcDealFinancials(paymentModalDeal, transactions, tasksMap[paymentModalDeal.id])}
+            onClose={() => setPaymentModalDeal(null)}
+            onSuccess={() => {
+              setPaymentModalDeal(null)
+              showToast('✓ Payment & proof screenshot logged successfully!')
+              load()
+            }}
+          />
+        )}
+
+        {/* ═══════════════════ PROOF SCREENSHOT LIGHTBOX MODAL ═══════════════════ */}
+        {viewingProof && (
+          <div
+            onClick={() => setViewingProof(null)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 10000,
+              background: 'rgba(0,0,0,0.85)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: '20px',
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: '#fff',
+                padding: '20px',
+                maxWidth: '650px',
+                width: '100%',
+                maxHeight: '90vh',
+                overflowY: 'auto',
+                border: '3px solid #171717',
+                boxShadow: '8px 8px 0 #b52d20',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '18px' }}>📸 {viewingProof.title}</h3>
+                  <div style={{ font: '11px "DM Mono",monospace', color: '#5d5a54', marginTop: '2px' }}>
+                    {viewingProof.amount ? `Amount: ${fmt(viewingProof.amount)} · ` : ''}
+                    {viewingProof.source ? `Source: ${viewingProof.source} · ` : ''}
+                    {viewingProof.date ? `Date: ${new Date(viewingProof.date).toLocaleDateString()}` : ''}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingProof(null)}
+                  style={{ background: '#171717', color: '#fff', border: 'none', padding: '6px 12px', font: '700 12px "DM Mono",monospace', cursor: 'pointer' }}
+                >
+                  ✕ Close
+                </button>
+              </div>
+              <div style={{ textAlign: 'center', background: '#f8f6f2', padding: '12px', border: '1px solid #e8e3d9' }}>
+                <img
+                  src={viewingProof.url}
+                  alt="Proof Screenshot"
+                  style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', border: '1px solid #ccc' }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </section>
   )
 }
 
-// ══════════════════════════════════════════════
-// Sub-views as separate components in same file
-// ══════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
+// Sub-Components
+// ═════════════════════════════════════════════════════════════════════════════
 
-function DealsListView({
-  deals, transactions, loading, isAr, onOpenDeal, onMarkDeposit, onMarkFinal, onReload
+/**
+ * Deal Card Item with Full Price, Left to Pay, Progress, Proof Thumbnails
+ */
+function DealCardItem({
+  deal, fin, onOpen, onReceivePayment, onViewProof
 }: {
-  deals: DealWithRelations[]
-  transactions: Transaction[]
-  loading: boolean
-  isAr: boolean
-  onOpenDeal: (id: string) => void
-  onMarkDeposit: (d: DealWithRelations) => void
-  onMarkFinal: (d: DealWithRelations) => void
-  onReload: () => void
+  deal: DealWithRelations
+  fin: ReturnType<typeof calcDealFinancials>
+  onOpen: () => void
+  onReceivePayment: () => void
+  onViewProof: (proof: any) => void
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {loading && <p style={{ font: '13px "DM Mono",monospace', color: '#5d5a54' }}>Loading deals…</p>}
-      {!loading && deals.length === 0 && (
-        <div style={{ padding: '48px', textAlign: 'center', background: '#fff', border: '1px solid #e8e3d9', font: '13px "DM Mono",monospace', color: '#5d5a54' }}>
-          No deals in CRM yet. Open a client card in the Pipeline and click "Open in CRM".
-        </div>
-      )}
-      {deals.map((deal) => {
-        const fin = calcDealFinancials(deal, transactions)
-        return (
-          <div
-            key={deal.id}
-            style={{
-              background: '#fff', border: '2px solid #171717',
-              boxShadow: '5px 5px 0 #171717', padding: '20px 24px',
-              display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '16px', justifyContent: 'space-between',
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ font: '700 15px "DM Sans",sans-serif' }}>
-                {deal.submission?.company} · <span style={{ color: '#b52d20' }}>{deal.deal_title}</span>
-              </div>
-              <div style={{ font: '11px "DM Mono",monospace', color: '#5d5a54', marginTop: '2px' }}>
-                {deal.submission?.name} · Total: {fmt(deal.total_value)} · Profit: <strong style={{ color: fin.netProfit >= 0 ? '#25D366' : '#b52d20' }}>{fmt(fin.netProfit)}</strong>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {!deal.deposit_paid_at && deal.deposit_amount > 0 && (
-                <button onClick={() => onMarkDeposit(deal)} style={{ padding: '6px 12px', font: '700 10px "DM Mono",monospace', background: '#25D366', color: '#fff', border: 'none', cursor: 'pointer' }}>
-                  ✓ Deposit Rcvd
-                </button>
-              )}
-              {!deal.final_paid_at && deal.final_amount > 0 && (
-                <button onClick={() => onMarkFinal(deal)} style={{ padding: '6px 12px', font: '700 10px "DM Mono",monospace', background: '#8b5cf6', color: '#fff', border: 'none', cursor: 'pointer' }}>
-                  🎉 Final Rcvd
-                </button>
-              )}
-              <button onClick={() => onOpenDeal(deal.id)} style={{ padding: '6px 14px', font: '700 11px "DM Mono",monospace', background: '#171717', color: '#f2efe8', border: 'none', cursor: 'pointer' }}>
-                Open →
-              </button>
-            </div>
+    <div
+      style={{
+        background: '#fff',
+        border: '2px solid #171717',
+        boxShadow: '6px 6px 0 #171717',
+        padding: '22px 26px',
+      }}
+    >
+      {/* Header Row */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '16px' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span style={{ font: '700 17px "DM Sans",sans-serif' }}>
+              {deal.submission?.company || '—'}
+            </span>
+            <span style={{ color: '#5d5a54', font: '13px "DM Sans",sans-serif' }}>·</span>
+            <span style={{ color: '#b52d20', font: '700 14px "DM Mono",monospace' }}>
+              {deal.deal_title || 'Unnamed Deal'}
+            </span>
+            {/* Status Badge */}
+            {fin.isCompletedAndPaid ? (
+              <span style={{ background: '#f3e8ff', color: '#6b21a8', border: '1px solid #d8b4fe', padding: '2px 8px', font: '700 10px "DM Mono",monospace' }}>
+                🎉 100% Done & Paid
+              </span>
+            ) : fin.isFullyPaid ? (
+              <span style={{ background: '#e0e7ff', color: '#3730a3', border: '1px solid #a5b4fc', padding: '2px 8px', font: '700 10px "DM Mono",monospace' }}>
+                💎 100% Paid in Full
+              </span>
+            ) : fin.hasDepositPaid ? (
+              <span style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac', padding: '2px 8px', font: '700 10px "DM Mono",monospace' }}>
+                💰 Deposit Paid ({fin.pctPaid}%)
+              </span>
+            ) : (
+              <span style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', padding: '2px 8px', font: '700 10px "DM Mono",monospace' }}>
+                ⏳ Awaiting Deposit (0%)
+              </span>
+            )}
           </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function CashLedgerView({
-  deals, transactions, isAr, txForm, setTxForm, txLoading, onAddTransaction, onDeleteTransaction
-}: {
-  deals: DealWithRelations[]
-  transactions: Transaction[]
-  isAr: boolean
-  txForm: any
-  setTxForm: any
-  txLoading: boolean
-  onAddTransaction: () => void
-  onDeleteTransaction: (id: string) => void
-}) {
-  const totalIn = transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const totalOut = transactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-
-  return (
-    <div>
-      {/* Totals Bar */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '32px' }}>
-        {[
-          { label: 'Total Income', value: fmt(totalIn), color: '#25D366' },
-          { label: 'Total Expenses', value: fmt(totalOut), color: '#b52d20' },
-          { label: 'Net Cash', value: fmt(totalIn - totalOut), color: totalIn - totalOut >= 0 ? '#8b5cf6' : '#b52d20' },
-        ].map((card) => (
-          <div key={card.label} style={{ background: '#fff', border: `2px solid ${card.color}`, boxShadow: `3px 3px 0 ${card.color}`, padding: '16px 20px' }}>
-            <div style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>{card.label}</div>
-            <div style={{ font: `700 22px "DM Mono",monospace`, color: card.color, marginTop: '4px' }}>{card.value}</div>
+          <div style={{ font: '11px "DM Mono",monospace', color: '#5d5a54', marginTop: '4px' }}>
+            Client: {deal.submission?.name || '—'} · {deal.submission?.phone || '—'} · Tasks: {fin.doneTasks}/{fin.totalTasks} Done
           </div>
-        ))}
-      </div>
-
-      {/* Add Transaction Form */}
-      <div style={{ background: '#f8f6f2', border: '1px solid #c5c0b5', padding: '20px 24px', marginBottom: '28px' }}>
-        <div style={{ font: '700 11px "DM Mono",monospace', textTransform: 'uppercase', marginBottom: '14px', color: '#171717' }}>
-          + Log Transaction
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
-          <select
-            value={txForm.type}
-            onChange={(e) => setTxForm((p: any) => ({ ...p, type: e.target.value }))}
-            style={inputStyle}
-          >
-            <option value="income">💰 Income</option>
-            <option value="expense">💸 Expense</option>
-          </select>
-          <select
-            value={txForm.deal_id}
-            onChange={(e) => setTxForm((p: any) => ({ ...p, deal_id: e.target.value }))}
-            style={inputStyle}
-          >
-            <option value="">— No deal (studio overhead) —</option>
-            {deals.map((d) => (
-              <option key={d.id} value={d.id}>{d.submission?.company} · {d.deal_title}</option>
-            ))}
-          </select>
-          <input
-            placeholder={isAr ? 'الوصف / Label' : 'Label (e.g. Deposit from Codera)'}
-            value={txForm.label}
-            onChange={(e) => setTxForm((p: any) => ({ ...p, label: e.target.value }))}
-            style={{ ...inputStyle, minWidth: '240px' }}
-          />
-          <input
-            type="number"
-            placeholder="Amount $"
-            value={txForm.amount}
-            onChange={(e) => setTxForm((p: any) => ({ ...p, amount: e.target.value }))}
-            style={{ ...inputStyle, width: '120px' }}
-          />
-          <input
-            type="date"
-            value={txForm.paid_at}
-            onChange={(e) => setTxForm((p: any) => ({ ...p, paid_at: e.target.value }))}
-            style={inputStyle}
-          />
-          <select
-            value={txForm.source}
-            onChange={(e) => setTxForm((p: any) => ({ ...p, source: e.target.value }))}
-            style={inputStyle}
-          >
-            {['InstaPay', 'Bank Wire', 'Stripe', 'Cash', 'Vodafone Cash', 'Other'].map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
+
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
-            onClick={onAddTransaction}
-            disabled={txLoading}
+            onClick={onReceivePayment}
             style={{
-              padding: '10px 18px', font: '700 11px "DM Mono",monospace',
-              background: '#171717', color: '#f2efe8', border: 'none', cursor: 'pointer',
+              padding: '6px 14px', font: '700 11px "DM Mono",monospace', cursor: 'pointer',
+              background: '#25D366', color: '#fff', border: '1px solid #16a34a',
+              display: 'flex', alignItems: 'center', gap: '6px',
             }}
           >
-            {txLoading ? '…' : '+ Add'}
+            📸 Receive Payment / Deposit
+          </button>
+          <button
+            onClick={onOpen}
+            style={{
+              padding: '6px 14px', font: '700 11px "DM Mono",monospace', cursor: 'pointer',
+              background: '#171717', color: '#f2efe8', border: '1px solid #171717',
+            }}
+          >
+            Open Tasks & Deal →
           </button>
         </div>
       </div>
 
-      {/* Transaction Table */}
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-          <thead>
-            <tr style={{ background: '#171717', color: '#f2efe8' }}>
-              {['Date', 'Type', 'Label', 'Deal', 'Source', 'Amount', ''].map((h) => (
-                <th key={h} style={{ padding: '10px 14px', textAlign: 'left', font: '700 10px "DM Mono",monospace', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.length === 0 && (
-              <tr>
-                <td colSpan={7} style={{ padding: '28px', textAlign: 'center', color: '#5d5a54', font: '12px "DM Mono",monospace' }}>
-                  No transactions yet.
-                </td>
-              </tr>
+      {/* Financial Matrix Grid */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+          gap: '14px',
+          background: '#f8f6f2',
+          padding: '14px 18px',
+          border: '1px solid #e8e3d9',
+        }}
+      >
+        <div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>🏷️ Full Deal Price</div>
+          <div style={{ font: '700 18px "DM Mono",monospace', color: '#171717' }}>{fmt(fin.totalPrice)}</div>
+        </div>
+
+        <div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>💰 Total Paid ({fin.pctPaid}%)</div>
+          <div style={{ font: '700 18px "DM Mono",monospace', color: '#25D366' }}>{fmt(fin.cashIn)}</div>
+        </div>
+
+        <div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>⏳ Left to Pay</div>
+          <div style={{ font: '700 18px "DM Mono",monospace', color: fin.leftToPay > 0 ? '#b52d20' : '#25D366' }}>
+            {fmt(fin.leftToPay)}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>💸 Expenses</div>
+          <div style={{ font: '700 16px "DM Mono",monospace', color: '#b52d20' }}>{fmt(fin.totalExpenses)}</div>
+        </div>
+
+        <div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>🏦 Net Profit</div>
+          <div style={{ font: '700 18px "DM Mono",monospace', color: fin.netProfit >= 0 ? '#8b5cf6' : '#b52d20' }}>
+            {fmt(fin.netProfit)} <span style={{ fontSize: '10px', opacity: 0.7 }}>({fin.margin}%)</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Proof Screenshots Thumbnails Row */}
+      {fin.proofs.length > 0 && (
+        <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <span style={{ font: '700 10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+            📸 Verified Proofs ({fin.proofs.length}):
+          </span>
+          {fin.proofs.map((p, idx) => (
+            <button
+              key={idx}
+              onClick={() => onViewProof({ url: p.url, title: p.label, amount: p.amount, date: p.date, source: p.source })}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                padding: '3px 8px', background: '#fff', border: '1px solid #c5c0b5',
+                cursor: 'pointer', font: '11px "DM Mono",monospace', color: '#171717',
+              }}
+            >
+              <img src={p.url} alt="Receipt thumbnail" style={{ width: 18, height: 18, objectFit: 'cover' }} />
+              <span>{p.label} ({fmt(p.amount)}) ↗</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Modal to Receive Money / Deposit with Screenshot Proof Upload
+ */
+function ReceivePaymentModal({
+  deal, currentFin, onClose, onSuccess
+}: {
+  deal: DealWithRelations
+  currentFin: ReturnType<typeof calcDealFinancials>
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const defaultDeposit = deal.deposit_amount > 0 ? deal.deposit_amount : Math.round(deal.total_value * 0.5)
+  const defaultAmount = currentFin.cashIn === 0 ? defaultDeposit : currentFin.leftToPay
+
+  const [amount, setAmount] = useState(String(defaultAmount || ''))
+  const [label, setLabel] = useState(
+    currentFin.cashIn === 0
+      ? `Deposit 50% — ${deal.submission?.company || deal.deal_title}`
+      : `Final Balance — ${deal.submission?.company || deal.deal_title}`
+  )
+  const [paymentType, setPaymentType] = useState<'deposit' | 'final' | 'full' | 'custom'>(
+    currentFin.cashIn === 0 ? 'deposit' : 'final'
+  )
+  const [source, setSource] = useState('InstaPay')
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().split('T')[0])
+  const [file, setFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const numAmount = parseFloat(amount) || 0
+  const simulatedNewPaid = currentFin.cashIn + numAmount
+  const simulatedLeftToPay = Math.max(0, deal.total_value - simulatedNewPaid)
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (f) {
+      setFile(f)
+      const reader = new FileReader()
+      reader.onload = () => setPreviewUrl(reader.result as string)
+      reader.readAsDataURL(f)
+    }
+  }
+
+  function applyPreset(type: 'deposit' | 'final' | 'full') {
+    setPaymentType(type)
+    if (type === 'deposit') {
+      const dep = deal.deposit_amount > 0 ? deal.deposit_amount : Math.round(deal.total_value * 0.5)
+      setAmount(String(dep))
+      setLabel(`Deposit 50% — ${deal.submission?.company || deal.deal_title}`)
+    } else if (type === 'final') {
+      setAmount(String(currentFin.leftToPay))
+      setLabel(`Final Balance — ${deal.submission?.company || deal.deal_title}`)
+    } else if (type === 'full') {
+      setAmount(String(deal.total_value))
+      setLabel(`100% Full Price Paid — ${deal.submission?.company || deal.deal_title}`)
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!numAmount || numAmount <= 0) return
+
+    setUploading(true)
+    try {
+      let proofUrl: string | null = null
+      if (file) {
+        proofUrl = await uploadProofFile(file)
+      }
+
+      // 1. Post transaction
+      await dbPost('transactions', {
+        deal_id: deal.id,
+        type: 'income',
+        label,
+        amount: numAmount,
+        paid_at: paidAt,
+        source,
+        proof_url: proofUrl,
+      })
+
+      // 2. Update deal timestamps
+      const patchBody: any = {}
+      if (paymentType === 'deposit' || currentFin.cashIn === 0) {
+        patchBody.deposit_paid_at = new Date().toISOString()
+      }
+      if (simulatedLeftToPay === 0 || paymentType === 'full' || paymentType === 'final') {
+        patchBody.final_paid_at = new Date().toISOString()
+      }
+      if (Object.keys(patchBody).length > 0) {
+        await dbPatch('deals', deal.id, patchBody)
+      }
+
+      onSuccess()
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 10000,
+        background: 'rgba(0,0,0,0.75)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '20px',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          border: '3px solid #171717',
+          boxShadow: '10px 10px 0 #171717',
+          maxWidth: '560px',
+          width: '100%',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+          padding: '28px',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+          <div>
+            <span className="eyebrow">Log Incoming Money</span>
+            <h2 style={{ fontSize: '22px', margin: '4px 0 0' }}>
+              Receive Payment: {deal.submission?.company}
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: '#171717', color: '#fff', border: 'none', padding: '6px 12px', font: '700 12px "DM Mono",monospace', cursor: 'pointer' }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Live Calculation Banner */}
+        <div style={{ background: '#f8f6f2', border: '1px solid #c5c0b5', padding: '14px 18px', marginBottom: '20px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+          <div>
+            <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>Full Deal Price</div>
+            <div style={{ font: '700 16px "DM Mono",monospace' }}>{fmt(deal.total_value)}</div>
+          </div>
+          <div>
+            <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>Current Paid</div>
+            <div style={{ font: '700 16px "DM Mono",monospace', color: '#25D366' }}>{fmt(currentFin.cashIn)}</div>
+          </div>
+          <div>
+            <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>Sub-Price Left</div>
+            <div style={{ font: '700 16px "DM Mono",monospace', color: simulatedLeftToPay > 0 ? '#b52d20' : '#25D366' }}>
+              {fmt(simulatedLeftToPay)}
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {/* Quick Preset Buttons */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => applyPreset('deposit')}
+              style={{
+                padding: '6px 12px', font: '700 11px "DM Mono",monospace', cursor: 'pointer',
+                background: paymentType === 'deposit' ? '#25D366' : '#fff',
+                color: paymentType === 'deposit' ? '#fff' : '#171717',
+                border: '1px solid #25D366',
+              }}
+            >
+              💰 Deposit (50%)
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('final')}
+              style={{
+                padding: '6px 12px', font: '700 11px "DM Mono",monospace', cursor: 'pointer',
+                background: paymentType === 'final' ? '#1d70b8' : '#fff',
+                color: paymentType === 'final' ? '#fff' : '#171717',
+                border: '1px solid #1d70b8',
+              }}
+            >
+              ⚡ Final Balance ({fmt(currentFin.leftToPay)})
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('full')}
+              style={{
+                padding: '6px 12px', font: '700 11px "DM Mono",monospace', cursor: 'pointer',
+                background: paymentType === 'full' ? '#8b5cf6' : '#fff',
+                color: paymentType === 'full' ? '#fff' : '#171717',
+                border: '1px solid #8b5cf6',
+              }}
+            >
+              💎 Full Price 100% ({fmt(deal.total_value)})
+            </button>
+          </div>
+
+          {/* Amount Input */}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+              Amount Received ($ USD) *
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              style={{ ...inputStyle, fontSize: '18px', fontWeight: 'bold' }}
+              placeholder="e.g. 1500"
+            />
+          </label>
+
+          {/* Label / Reference */}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+              Transaction Label / Note
+            </span>
+            <input
+              type="text"
+              required
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+
+          {/* Payment Source & Date */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+                Payment Source
+              </span>
+              <select value={source} onChange={(e) => setSource(e.target.value)} style={inputStyle}>
+                {['InstaPay', 'Bank Wire', 'Vodafone Cash', 'Stripe', 'Cash', 'Other'].map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>
+                Date Received
+              </span>
+              <input
+                type="date"
+                required
+                value={paidAt}
+                onChange={(e) => setPaidAt(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+          </div>
+
+          {/* Screenshot / Proof Image Upload */}
+          <div style={{ border: '1px dashed #c5c0b5', padding: '16px', background: '#f8f6f2' }}>
+            <div style={{ font: '700 11px "DM Mono",monospace', textTransform: 'uppercase', marginBottom: '8px', color: '#171717' }}>
+              📸 Upload Receipt Screenshot / Proof (Optional)
+            </div>
+            
+            <input
+              type="file"
+              accept="image/*"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              style={{ display: 'none' }}
+            />
+
+            {!previewUrl ? (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  width: '100%', padding: '14px', font: '12px "DM Mono",monospace',
+                  background: '#fff', border: '1px solid #c5c0b5', cursor: 'pointer',
+                  textAlign: 'center', color: '#5d5a54',
+                }}
+              >
+                📎 Click to upload InstaPay / Bank transfer screenshot
+              </button>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <img
+                  src={previewUrl}
+                  alt="Receipt Preview"
+                  style={{ width: 64, height: 64, objectFit: 'cover', border: '1px solid #171717' }}
+                />
+                <div style={{ flex: 1 }}>
+                  <div style={{ font: '700 12px "DM Mono",monospace', color: '#25D366' }}>✓ Screenshot attached</div>
+                  <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54' }}>{file?.name}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setFile(null); setPreviewUrl(null) }}
+                  style={{ background: 'none', border: '1px solid #fca5a5', color: '#b52d20', padding: '4px 8px', font: '10px "DM Mono",monospace', cursor: 'pointer' }}
+                >
+                  Remove
+                </button>
+              </div>
             )}
-            {transactions.map((tx, i) => {
-              const deal = deals.find((d) => d.id === tx.deal_id)
-              return (
-                <tr key={tx.id} style={{ background: i % 2 === 0 ? '#fff' : '#fcfbfa', borderBottom: '1px solid #e8e3d9' }}>
-                  <td style={{ padding: '10px 14px', font: '11px "DM Mono",monospace', whiteSpace: 'nowrap' }}>
-                    {new Date(tx.paid_at).toLocaleDateString()}
-                  </td>
-                  <td style={{ padding: '10px 14px' }}>
-                    <span style={{ padding: '2px 8px', font: '700 10px "DM Mono",monospace', background: tx.type === 'income' ? '#dcfce7' : '#fee2e2', color: tx.type === 'income' ? '#166534' : '#991b1b' }}>
-                      {tx.type === 'income' ? '↑ Income' : '↓ Expense'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '10px 14px' }}>{tx.label}</td>
-                  <td style={{ padding: '10px 14px', font: '11px "DM Mono",monospace', color: '#5d5a54' }}>
-                    {deal ? `${deal.submission?.company}` : '—'}
-                  </td>
-                  <td style={{ padding: '10px 14px', font: '11px "DM Mono",monospace' }}>{tx.source}</td>
-                  <td style={{ padding: '10px 14px', font: '700 13px "DM Mono",monospace', color: tx.type === 'income' ? '#25D366' : '#b52d20', whiteSpace: 'nowrap' }}>
-                    {tx.type === 'income' ? '+' : '-'}{fmt(tx.amount)}
-                  </td>
-                  <td style={{ padding: '10px 14px' }}>
-                    <button
-                      onClick={() => onDeleteTransaction(tx.id)}
-                      style={{ background: 'none', border: '1px solid #fca5a5', color: '#b52d20', padding: '3px 8px', cursor: 'pointer', font: '10px "DM Mono",monospace' }}
-                    >
-                      🗑️
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+          </div>
+
+          {/* Submit Button */}
+          <button
+            type="submit"
+            disabled={uploading}
+            style={{
+              marginTop: '8px',
+              padding: '14px',
+              font: '700 13px "DM Mono",monospace',
+              background: '#25D366',
+              color: '#fff',
+              border: 'none',
+              cursor: uploading ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+            }}
+          >
+            {uploading ? '⏳ Recording & Uploading Proof…' : `✓ Confirm Receipt of ${fmt(numAmount)}`}
+          </button>
+        </form>
       </div>
     </div>
   )
 }
 
+/**
+ * Deal Detail View with Full Price Input directly in Tasks & Financials
+ */
 function DealDetailView({
-  deal, transactions, isAr, tab, setTab, onBack, onReload, showToast
+  deal, transactions, tasks, isAr, tab, setTab, onBack, onReload, showToast, onReceivePayment, onViewProof
 }: {
   deal: DealWithRelations
   transactions: Transaction[]
+  tasks: Task[]
   isAr: boolean
   tab: 'financials' | 'tasks'
   setTab: (t: 'financials' | 'tasks') => void
   onBack: () => void
   onReload: () => void
   showToast: (m: string) => void
+  onReceivePayment: () => void
+  onViewProof: (proof: any) => void
 }) {
-  const fin = calcDealFinancials(deal, transactions)
-  const [tasks, setTasks] = useState<any[]>([])
+  const fin = calcDealFinancials(deal, transactions, tasks)
+  const [dealTasks, setDealTasks] = useState<Task[]>(tasks)
   const [taskLoading, setTaskLoading] = useState(false)
+  const [isSavingPrice, setIsSavingPrice] = useState(false)
+
   const [editDeal, setEditDeal] = useState({
     deal_title: deal.deal_title || '',
     total_value: String(deal.total_value || ''),
@@ -681,20 +1093,31 @@ function DealDetailView({
     notes: deal.notes || '',
   })
 
-  async function loadTasks() {
-    setTaskLoading(true)
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/tasks?deal_id=eq.${deal.id}&order=sort_order.asc`,
-      { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
-    )
-    const data = await res.json()
-    setTasks(Array.isArray(data) ? data : [])
-    setTaskLoading(false)
+  useEffect(() => {
+    setDealTasks(tasks)
+  }, [tasks])
+
+  async function saveDealPriceQuick(newTotalVal: number) {
+    setIsSavingPrice(true)
+    const dep = Math.round(newTotalVal * 0.5)
+    const finVal = newTotalVal - dep
+    await fetch(`${SUPABASE_URL}/rest/v1/deals?id=eq.${deal.id}`, {
+      method: 'PATCH',
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        total_value: newTotalVal,
+        deposit_amount: dep,
+        final_amount: finVal,
+      }),
+    })
+    setEditDeal((p) => ({ ...p, total_value: String(newTotalVal), deposit_amount: String(dep), final_amount: String(finVal) }))
+    setIsSavingPrice(false)
+    showToast(`✓ Deal Full Price updated to ${fmt(newTotalVal)}`)
+    onReload()
   }
 
-  useEffect(() => { loadTasks() }, [deal.id])
-
   async function saveDealMeta() {
+    setIsSavingPrice(true)
     await fetch(`${SUPABASE_URL}/rest/v1/deals?id=eq.${deal.id}`, {
       method: 'PATCH',
       headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
@@ -707,6 +1130,7 @@ function DealDetailView({
         notes: editDeal.notes,
       }),
     })
+    setIsSavingPrice(false)
     showToast('✓ Deal info saved')
     onReload()
   }
@@ -716,15 +1140,19 @@ function DealDetailView({
     const body: any = { status: next }
     if (next === 'done') body.done_at = new Date().toISOString()
     else body.done_at = null
+    
+    setDealTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, ...body } : t)))
+    
     await fetch(`${SUPABASE_URL}/rest/v1/tasks?id=eq.${task.id}`, {
       method: 'PATCH',
       headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
       body: JSON.stringify(body),
     })
-    loadTasks()
+    onReload()
   }
 
   async function generateDefaultTasks() {
+    setTaskLoading(true)
     for (const t of DEFAULT_TASKS) {
       await fetch(`${SUPABASE_URL}/rest/v1/tasks`, {
         method: 'POST',
@@ -732,10 +1160,10 @@ function DealDetailView({
         body: JSON.stringify({ ...t, deal_id: deal.id }),
       })
     }
-    loadTasks()
-    showToast('✓ Default tasks created for this deal')
+    setTaskLoading(false)
+    showToast('✓ 15 default tasks generated')
+    onReload()
   }
-
 
   const PHASES: { key: string; label: string; color: string }[] = [
     { key: 'build', label: '🔨 Build', color: '#1d70b8' },
@@ -743,29 +1171,113 @@ function DealDetailView({
     { key: 'launch', label: '🚀 Launch', color: '#8b5cf6' },
   ]
 
-  const doneTasks = tasks.filter((t) => t.status === 'done').length
-  const progress = tasks.length > 0 ? Math.round((doneTasks / tasks.length) * 100) : 0
+  const doneTasks = dealTasks.filter((t) => t.status === 'done').length
+  const progress = dealTasks.length > 0 ? Math.round((doneTasks / dealTasks.length) * 100) : 0
 
   return (
     <div>
       {/* Back + Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
-        <button onClick={onBack} style={{ padding: '6px 14px', font: '11px "DM Mono",monospace', cursor: 'pointer', border: '1px solid #c5c0b5', background: '#f8f6f2' }}>
-          ← Back
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <button onClick={onBack} style={{ padding: '6px 14px', font: '11px "DM Mono",monospace', cursor: 'pointer', border: '1px solid #c5c0b5', background: '#f8f6f2' }}>
+            ← Back to Deals
+          </button>
+          <div>
+            <h2 style={{ fontSize: '22px', margin: 0 }}>
+              {deal.submission?.company} · <span style={{ color: '#b52d20' }}>{deal.deal_title || 'Deal Workspace'}</span>
+            </h2>
+            <div style={{ font: '11px "DM Mono",monospace', color: '#5d5a54', marginTop: '2px' }}>
+              Client: {deal.submission?.name} · {deal.submission?.phone}
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={onReceivePayment}
+          style={{
+            padding: '10px 18px', font: '700 12px "DM Mono",monospace',
+            background: '#25D366', color: '#fff', border: 'none', cursor: 'pointer',
+            boxShadow: '3px 3px 0 #16a34a', display: 'flex', alignItems: 'center', gap: '6px',
+          }}
+        >
+          📸 + Receive Payment / Deposit
         </button>
+      </div>
+
+      {/* ─── LIVE PRICE & SUB-PRICE LEFT TO PAY BANNER ─── */}
+      <div
+        style={{
+          background: '#fff',
+          border: '2px solid #171717',
+          boxShadow: '6px 6px 0 #171717',
+          padding: '20px 24px',
+          marginBottom: '28px',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gap: '16px',
+          alignItems: 'center',
+        }}
+      >
+        {/* Full Deal Price Input */}
         <div>
-          <h2 style={{ fontSize: '22px', margin: 0 }}>
-            {deal.submission?.company} · <span style={{ color: '#b52d20' }}>{deal.deal_title || 'Deal Details'}</span>
-          </h2>
-          <div style={{ font: '11px "DM Mono",monospace', color: '#5d5a54', marginTop: '2px' }}>
-            {deal.submission?.name} · {deal.submission?.phone}
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase', marginBottom: '4px' }}>
+            🏷️ Full Price of Deal ($)
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <input
+              type="number"
+              value={editDeal.total_value}
+              onChange={(e) => setEditDeal((p) => ({ ...p, total_value: e.target.value }))}
+              onBlur={() => {
+                const val = parseFloat(editDeal.total_value) || 0
+                if (val !== deal.total_value) saveDealPriceQuick(val)
+              }}
+              style={{ ...inputStyle, width: '130px', fontWeight: 'bold', fontSize: '16px' }}
+            />
+            <button
+              onClick={() => saveDealPriceQuick(parseFloat(editDeal.total_value) || 0)}
+              disabled={isSavingPrice}
+              style={{ padding: '0 10px', font: '700 11px "DM Mono",monospace', background: '#171717', color: '#fff', border: 'none', cursor: 'pointer' }}
+            >
+              {isSavingPrice ? '…' : 'Save'}
+            </button>
+          </div>
+        </div>
+
+        {/* Total Paid So Far */}
+        <div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
+            💰 Total Paid So Far
+          </div>
+          <div style={{ font: '700 22px "DM Mono",monospace', color: '#25D366' }}>
+            {fmt(fin.cashIn)} <span style={{ fontSize: '12px', opacity: 0.8 }}>({fin.pctPaid}%)</span>
+          </div>
+        </div>
+
+        {/* Sub-Price Left To Pay */}
+        <div style={{ background: fin.leftToPay > 0 ? '#fef2f2' : '#f0fdf4', padding: '10px 14px', border: `1px solid ${fin.leftToPay > 0 ? '#fca5a5' : '#86efac'}` }}>
+          <div style={{ font: '10px "DM Mono",monospace', color: fin.leftToPay > 0 ? '#991b1b' : '#166534', textTransform: 'uppercase' }}>
+            ⏳ Sub-Price Left to Pay
+          </div>
+          <div style={{ font: '700 22px "DM Mono",monospace', color: fin.leftToPay > 0 ? '#b52d20' : '#166534' }}>
+            {fmt(fin.leftToPay)}
+          </div>
+        </div>
+
+        {/* Net Profit */}
+        <div>
+          <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase' }}>
+            🏦 Net Studio Profit
+          </div>
+          <div style={{ font: '700 20px "DM Mono",monospace', color: fin.netProfit >= 0 ? '#8b5cf6' : '#b52d20' }}>
+            {fmt(fin.netProfit)} <span style={{ fontSize: '11px', opacity: 0.7 }}>({fin.margin}%)</span>
           </div>
         </div>
       </div>
 
       {/* Tab Nav */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '24px' }}>
-        {(['financials', 'tasks'] as const).map((t) => (
+        {(['tasks', 'financials'] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -775,116 +1287,44 @@ function DealDetailView({
               border: '1px solid #171717', cursor: 'pointer',
             }}
           >
-            {t === 'financials' ? '💰 Financials' : `✅ Tasks (${doneTasks}/${tasks.length})`}
+            {t === 'tasks' ? `✅ Deliverables & Tasks (${doneTasks}/${dealTasks.length})` : '💰 Full Financial Ledger'}
           </button>
         ))}
       </div>
 
-      {/* FINANCIALS TAB */}
-      {tab === 'financials' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-          {/* Left: edit fields */}
-          <div style={{ background: '#fff', border: '2px solid #171717', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div style={{ font: '700 12px "DM Mono",monospace', textTransform: 'uppercase', marginBottom: '4px' }}>Deal Info & Financials</div>
-            {[
-              { label: 'Deal Title', key: 'deal_title', type: 'text' },
-              { label: 'Total Value ($)', key: 'total_value', type: 'number' },
-              { label: 'Deposit 50% ($)', key: 'deposit_amount', type: 'number' },
-              { label: 'Final Balance ($)', key: 'final_amount', type: 'number' },
-              { label: 'Overhead Expenses ($)', key: 'expenses', type: 'number' },
-            ].map(({ label, key, type }) => (
-              <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>{label}</span>
-                <input
-                  type={type}
-                  value={(editDeal as any)[key]}
-                  onChange={(e) => setEditDeal((p) => ({ ...p, [key]: e.target.value }))}
-                  style={inputStyle}
-                />
-              </label>
-            ))}
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>Internal Notes</span>
-              <textarea
-                value={editDeal.notes}
-                rows={3}
-                onChange={(e) => setEditDeal((p) => ({ ...p, notes: e.target.value }))}
-                style={{ ...inputStyle, resize: 'vertical' }}
-              />
-            </label>
-            <button
-              onClick={saveDealMeta}
-              style={{ padding: '10px', font: '700 12px "DM Mono",monospace', background: '#171717', color: '#f2efe8', border: 'none', cursor: 'pointer', marginTop: '4px' }}
-            >
-              ✓ Save Deal Info
-            </button>
-          </div>
-
-          {/* Right: calculated summary */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {[
-              { label: '💰 Cash Received', value: fmt(fin.cashIn), color: '#25D366' },
-              { label: '⏳ Deposit Due', value: fmt(fin.depositDue), color: fin.depositDue > 0 ? '#f59e0b' : '#25D366' },
-              { label: '⏳ Final Due', value: fmt(fin.finalDue), color: fin.finalDue > 0 ? '#1d70b8' : '#25D366' },
-              { label: '💸 Total Expenses', value: fmt(fin.totalExpenses), color: '#b52d20' },
-              { label: '🏦 Net Profit', value: `${fmt(fin.netProfit)} (${fin.margin}%)`, color: fin.netProfit >= 0 ? '#8b5cf6' : '#b52d20' },
-            ].map((row) => (
-              <div key={row.label} style={{ background: '#fff', border: `2px solid ${row.color}`, boxShadow: `3px 3px 0 ${row.color}`, padding: '14px 18px' }}>
-                <div style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>{row.label}</div>
-                <div style={{ font: '700 20px "DM Mono",monospace', color: row.color, marginTop: '4px' }}>{row.value}</div>
-              </div>
-            ))}
-
-            {/* Deal Transactions */}
-            {transactions.length > 0 && (
-              <div style={{ background: '#f8f6f2', border: '1px solid #c5c0b5', padding: '14px 18px' }}>
-                <div style={{ font: '700 10px "DM Mono",monospace', textTransform: 'uppercase', marginBottom: '10px' }}>Transactions for This Deal</div>
-                {transactions.map((tx) => (
-                  <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #e8e3d9', font: '12px "DM Mono",monospace' }}>
-                    <span style={{ color: '#5d5a54' }}>{new Date(tx.paid_at).toLocaleDateString()} · {tx.label}</span>
-                    <span style={{ fontWeight: 700, color: tx.type === 'income' ? '#25D366' : '#b52d20' }}>
-                      {tx.type === 'income' ? '+' : '-'}{fmt(tx.amount)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* TASKS TAB */}
+      {/* ─── TASKS TAB (WITH PRICE EMBEDDED) ─── */}
       {tab === 'tasks' && (
         <div>
           {/* Progress Bar */}
           <div style={{ marginBottom: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', font: '11px "DM Mono",monospace', color: '#5d5a54', marginBottom: '6px' }}>
-              <span>Project Progress</span>
-              <span>{doneTasks} / {tasks.length} tasks done ({progress}%)</span>
+              <span>Project Deliverables Progress</span>
+              <span>{doneTasks} / {dealTasks.length} tasks done ({progress}%)</span>
             </div>
             <div style={{ height: '8px', background: '#e8e3d9', borderRadius: 0 }}>
               <div style={{ height: '100%', width: `${progress}%`, background: progress === 100 ? '#25D366' : '#8b5cf6', transition: 'width 0.3s ease' }} />
             </div>
           </div>
 
-          {/* Generate Tasks Button if empty */}
-          {tasks.length === 0 && (
+          {/* Empty tasks state */}
+          {dealTasks.length === 0 && (
             <div style={{ textAlign: 'center', padding: '40px', background: '#f8f6f2', border: '1px solid #c5c0b5', marginBottom: '24px' }}>
               <p style={{ font: '13px "DM Mono",monospace', color: '#5d5a54', marginBottom: '14px' }}>
-                No tasks yet. Generate the default 15-task build/QA/launch checklist?
+                No tasks yet for this deal. Generate the default 15-step studio checklist?
               </p>
               <button
                 onClick={generateDefaultTasks}
+                disabled={taskLoading}
                 style={{ padding: '10px 20px', font: '700 12px "DM Mono",monospace', background: '#171717', color: '#f2efe8', border: 'none', cursor: 'pointer' }}
               >
-                ⚡ Generate Default Tasks
+                {taskLoading ? 'Generating…' : '⚡ Generate Default 15 Tasks'}
               </button>
             </div>
           )}
 
-          {/* Tasks by Phase */}
+          {/* Tasks By Phase */}
           {PHASES.map((ph) => {
-            const phaseTasks = tasks.filter((t) => t.phase === ph.key)
+            const phaseTasks = dealTasks.filter((t) => t.phase === ph.key)
             if (phaseTasks.length === 0) return null
             return (
               <div key={ph.key} style={{ marginBottom: '24px' }}>
@@ -931,6 +1371,298 @@ function DealDetailView({
           })}
         </div>
       )}
+
+      {/* ─── FINANCIALS TAB ─── */}
+      {tab === 'financials' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+          {/* Edit Fields */}
+          <div style={{ background: '#fff', border: '2px solid #171717', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ font: '700 12px "DM Mono",monospace', textTransform: 'uppercase', marginBottom: '4px' }}>
+              Deal Financial Structure
+            </div>
+            {[
+              { label: 'Deal Title', key: 'deal_title', type: 'text' },
+              { label: 'Full Deal Price ($)', key: 'total_value', type: 'number' },
+              { label: 'Target Deposit 50% ($)', key: 'deposit_amount', type: 'number' },
+              { label: 'Target Final Balance ($)', key: 'final_amount', type: 'number' },
+              { label: 'Studio Overhead Expenses ($)', key: 'expenses', type: 'number' },
+            ].map(({ label, key, type }) => (
+              <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>{label}</span>
+                <input
+                  type={type}
+                  value={(editDeal as any)[key]}
+                  onChange={(e) => setEditDeal((p) => ({ ...p, [key]: e.target.value }))}
+                  style={inputStyle}
+                />
+              </label>
+            ))}
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>Internal Notes</span>
+              <textarea
+                value={editDeal.notes}
+                rows={3}
+                onChange={(e) => setEditDeal((p) => ({ ...p, notes: e.target.value }))}
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+            </label>
+            <button
+              onClick={saveDealMeta}
+              style={{ padding: '10px', font: '700 12px "DM Mono",monospace', background: '#171717', color: '#f2efe8', border: 'none', cursor: 'pointer', marginTop: '4px' }}
+            >
+              ✓ Save Financial Details
+            </button>
+          </div>
+
+          {/* Transactions & Proofs for This Deal */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ background: '#f8f6f2', border: '1px solid #c5c0b5', padding: '16px 20px' }}>
+              <div style={{ font: '700 11px "DM Mono",monospace', textTransform: 'uppercase', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Deal Payment History ({transactions.length})</span>
+                <button
+                  onClick={onReceivePayment}
+                  style={{ background: '#25D366', color: '#fff', border: 'none', padding: '4px 10px', font: '700 10px "DM Mono",monospace', cursor: 'pointer' }}
+                >
+                  + Add Payment
+                </button>
+              </div>
+
+              {transactions.length === 0 ? (
+                <div style={{ color: '#5d5a54', font: '12px "DM Mono",monospace', textAlign: 'center', padding: '16px 0' }}>
+                  No payments logged yet for this deal.
+                </div>
+              ) : (
+                transactions.map((tx) => (
+                  <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #e8e3d9', font: '12px "DM Mono",monospace' }}>
+                    <div>
+                      <div style={{ fontWeight: 'bold' }}>{tx.label}</div>
+                      <div style={{ color: '#5d5a54', fontSize: '10px', marginTop: '2px' }}>
+                        {new Date(tx.paid_at).toLocaleDateString()} · {tx.source}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {tx.proof_url && (
+                        <button
+                          onClick={() => onViewProof({ url: tx.proof_url!, title: tx.label, amount: tx.amount, date: tx.paid_at, source: tx.source })}
+                          style={{ padding: '2px 6px', background: '#fff', border: '1px solid #c5c0b5', font: '10px "DM Mono",monospace', cursor: 'pointer' }}
+                        >
+                          📸 Proof
+                        </button>
+                      )}
+                      <span style={{ fontWeight: 700, color: tx.type === 'income' ? '#25D366' : '#b52d20' }}>
+                        {tx.type === 'income' ? '+' : '-'}{fmt(tx.amount)}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Cash Ledger Table View with Screenshot Proof Upload
+ */
+function CashLedgerView({
+  deals, transactions, isAr, txForm, setTxForm, txProofPreview, setTxProofPreview, txLoading, onAddTransaction, onDeleteTransaction, onViewProof
+}: {
+  deals: DealWithRelations[]
+  transactions: Transaction[]
+  isAr: boolean
+  txForm: any
+  setTxForm: any
+  txProofPreview: string | null
+  setTxProofPreview: (p: string | null) => void
+  txLoading: boolean
+  onAddTransaction: () => void
+  onDeleteTransaction: (id: string) => void
+  onViewProof: (proof: any) => void
+}) {
+  const totalIn = transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0)
+  const totalOut = transactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+  const ledgerFileRef = useRef<HTMLInputElement>(null)
+
+  async function handleProofFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (f) {
+      const url = await uploadProofFile(f)
+      setTxForm((p: any) => ({ ...p, proof_url: url }))
+      setTxProofPreview(url)
+    }
+  }
+
+  return (
+    <div>
+      {/* Totals Bar */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '32px' }}>
+        {[
+          { label: 'Total Income Received', value: fmt(totalIn), color: '#25D366' },
+          { label: 'Total Studio Expenses', value: fmt(totalOut), color: '#b52d20' },
+          { label: 'Net Cash In Drawer', value: fmt(totalIn - totalOut), color: totalIn - totalOut >= 0 ? '#8b5cf6' : '#b52d20' },
+        ].map((card) => (
+          <div key={card.label} style={{ background: '#fff', border: `2px solid ${card.color}`, boxShadow: `3px 3px 0 ${card.color}`, padding: '16px 20px' }}>
+            <div style={{ font: '10px "DM Mono",monospace', textTransform: 'uppercase', color: '#5d5a54' }}>{card.label}</div>
+            <div style={{ font: `700 22px "DM Mono",monospace`, color: card.color, marginTop: '4px' }}>{card.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Add Transaction Form */}
+      <div style={{ background: '#f8f6f2', border: '1px solid #c5c0b5', padding: '20px 24px', marginBottom: '28px' }}>
+        <div style={{ font: '700 11px "DM Mono",monospace', textTransform: 'uppercase', marginBottom: '14px', color: '#171717' }}>
+          + Log Transaction (Income or Expense)
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
+          <select
+            value={txForm.type}
+            onChange={(e) => setTxForm((p: any) => ({ ...p, type: e.target.value }))}
+            style={inputStyle}
+          >
+            <option value="income">💰 Income</option>
+            <option value="expense">💸 Expense</option>
+          </select>
+          <select
+            value={txForm.deal_id}
+            onChange={(e) => setTxForm((p: any) => ({ ...p, deal_id: e.target.value }))}
+            style={inputStyle}
+          >
+            <option value="">— No deal (studio overhead) —</option>
+            {deals.map((d) => (
+              <option key={d.id} value={d.id}>{d.submission?.company} · {d.deal_title}</option>
+            ))}
+          </select>
+          <input
+            placeholder={isAr ? 'الوصف / Label' : 'Label (e.g. Deposit from Codera)'}
+            value={txForm.label}
+            onChange={(e) => setTxForm((p: any) => ({ ...p, label: e.target.value }))}
+            style={{ ...inputStyle, minWidth: '220px' }}
+          />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Amount $"
+            value={txForm.amount}
+            onChange={(e) => setTxForm((p: any) => ({ ...p, amount: e.target.value }))}
+            style={{ ...inputStyle, width: '120px' }}
+          />
+          <input
+            type="date"
+            value={txForm.paid_at}
+            onChange={(e) => setTxForm((p: any) => ({ ...p, paid_at: e.target.value }))}
+            style={inputStyle}
+          />
+          <select
+            value={txForm.source}
+            onChange={(e) => setTxForm((p: any) => ({ ...p, source: e.target.value }))}
+            style={inputStyle}
+          >
+            {['InstaPay', 'Bank Wire', 'Vodafone Cash', 'Stripe', 'Cash', 'Other'].map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+
+          {/* Screenshot input button */}
+          <input
+            type="file"
+            accept="image/*"
+            ref={ledgerFileRef}
+            onChange={handleProofFile}
+            style={{ display: 'none' }}
+          />
+          <button
+            type="button"
+            onClick={() => ledgerFileRef.current?.click()}
+            style={{
+              padding: '10px 14px', font: '700 11px "DM Mono",monospace',
+              background: txProofPreview ? '#25D366' : '#fff',
+              color: txProofPreview ? '#fff' : '#171717',
+              border: '1px solid #c5c0b5', cursor: 'pointer',
+            }}
+          >
+            {txProofPreview ? '📸 Screenshot ✓' : '📎 Screenshot'}
+          </button>
+
+          <button
+            onClick={onAddTransaction}
+            disabled={txLoading}
+            style={{
+              padding: '10px 18px', font: '700 11px "DM Mono",monospace',
+              background: '#171717', color: '#f2efe8', border: 'none', cursor: 'pointer',
+            }}
+          >
+            {txLoading ? '…' : '+ Log'}
+          </button>
+        </div>
+      </div>
+
+      {/* Transaction Table */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <thead>
+            <tr style={{ background: '#171717', color: '#f2efe8' }}>
+              {['Date', 'Type', 'Label', 'Deal', 'Source', 'Proof', 'Amount', ''].map((h) => (
+                <th key={h} style={{ padding: '10px 14px', textAlign: 'left', font: '700 10px "DM Mono",monospace', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {transactions.length === 0 && (
+              <tr>
+                <td colSpan={8} style={{ padding: '28px', textAlign: 'center', color: '#5d5a54', font: '12px "DM Mono",monospace' }}>
+                  No transactions yet.
+                </td>
+              </tr>
+            )}
+            {transactions.map((tx, i) => {
+              const deal = deals.find((d) => d.id === tx.deal_id)
+              return (
+                <tr key={tx.id} style={{ background: i % 2 === 0 ? '#fff' : '#fcfbfa', borderBottom: '1px solid #e8e3d9' }}>
+                  <td style={{ padding: '10px 14px', font: '11px "DM Mono",monospace', whiteSpace: 'nowrap' }}>
+                    {new Date(tx.paid_at).toLocaleDateString()}
+                  </td>
+                  <td style={{ padding: '10px 14px' }}>
+                    <span style={{ padding: '2px 8px', font: '700 10px "DM Mono",monospace', background: tx.type === 'income' ? '#dcfce7' : '#fee2e2', color: tx.type === 'income' ? '#166534' : '#991b1b' }}>
+                      {tx.type === 'income' ? '↑ Income' : '↓ Expense'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '10px 14px' }}>{tx.label}</td>
+                  <td style={{ padding: '10px 14px', font: '11px "DM Mono",monospace', color: '#5d5a54' }}>
+                    {deal ? `${deal.submission?.company}` : '—'}
+                  </td>
+                  <td style={{ padding: '10px 14px', font: '11px "DM Mono",monospace' }}>{tx.source}</td>
+                  <td style={{ padding: '10px 14px' }}>
+                    {tx.proof_url ? (
+                      <button
+                        onClick={() => onViewProof({ url: tx.proof_url!, title: tx.label, amount: tx.amount, date: tx.paid_at, source: tx.source })}
+                        style={{ background: '#f8f6f2', border: '1px solid #c5c0b5', padding: '3px 8px', font: '10px "DM Mono",monospace', cursor: 'pointer' }}
+                      >
+                        📸 View
+                      </button>
+                    ) : (
+                      <span style={{ color: '#aaa', fontSize: '11px' }}>—</span>
+                    )}
+                  </td>
+                  <td style={{ padding: '10px 14px', font: '700 13px "DM Mono",monospace', color: tx.type === 'income' ? '#25D366' : '#b52d20', whiteSpace: 'nowrap' }}>
+                    {tx.type === 'income' ? '+' : '-'}{fmt(tx.amount)}
+                  </td>
+                  <td style={{ padding: '10px 14px' }}>
+                    <button
+                      onClick={() => onDeleteTransaction(tx.id)}
+                      style={{ background: 'none', border: '1px solid #fca5a5', color: '#b52d20', padding: '3px 8px', cursor: 'pointer', font: '10px "DM Mono",monospace' }}
+                    >
+                      🗑️
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -944,4 +1676,3 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
   width: '100%',
 }
-

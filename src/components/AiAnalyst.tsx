@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import type { Deal, Transaction, DealWithRelations } from '../lib/crm'
+import type { Deal, Transaction, DealWithRelations, Task } from '../lib/crm'
 import { calcStudioTotals, calcDealFinancials, fmt } from '../lib/crm'
 
 const NVIDIA_API_KEY = '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'
@@ -15,46 +15,62 @@ type Message = {
 // ─── Build a rich system prompt from real CRM data ───────────────────────────
 function buildSystemPrompt(
   deals: DealWithRelations[],
-  transactions: Transaction[]
+  transactions: Transaction[],
+  tasksMap: Record<string, Task[]> = {}
 ): string {
-  const totals = calcStudioTotals(deals, transactions)
+  const totals = calcStudioTotals(deals, transactions, tasksMap)
 
   const dealsJson = deals.map((d) => {
-    const fin = calcDealFinancials(d, transactions)
+    const fin = calcDealFinancials(d, transactions, tasksMap[d.id])
     const dealTxs = transactions.filter((t) => t.deal_id === d.id)
     return {
       id: d.id.slice(0, 8),
       client: d.submission?.company || 'Unknown',
-      name: d.submission?.name,
-      deal: d.deal_title,
-      status: d.submission?.status || 'unknown',
-      total_value: d.total_value,
-      deposit: d.deposit_amount,
-      final: d.final_amount,
-      deposit_received: !!d.deposit_paid_at,
-      final_received: !!d.final_paid_at,
+      client_name: d.submission?.name,
+      client_phone: d.submission?.phone,
+      deal_title: d.deal_title,
+      pipeline_status: d.submission?.status || 'unknown',
+      total_deal_price: fin.totalPrice,
+      total_paid_so_far: fin.cashIn,
+      sub_price_left_to_pay: fin.leftToPay,
+      pct_paid: `${fin.pctPaid}%`,
+      payment_tier: fin.isFullyPaid
+        ? '💎 100% Paid in Full'
+        : fin.hasDepositPaid
+        ? '💰 Deposit Paid (Remaining Balance Due)'
+        : '⏳ Awaiting Deposit (0% Paid)',
+      has_deposit_paid: fin.hasDepositPaid,
+      is_fully_paid: fin.isFullyPaid,
+      is_awaiting_deposit: fin.isAwaitingDeposit,
+      work_completion: {
+        total_tasks: fin.totalTasks,
+        done_tasks: fin.doneTasks,
+        is_work_finished: fin.isWorkFinished,
+        is_completed_and_paid_100pct: fin.isCompletedAndPaid,
+      },
+      proof_screenshots: {
+        count: fin.proofCount,
+        has_proof: fin.proofCount > 0,
+        proof_details: fin.proofs.map((p) => ({
+          label: p.label,
+          amount: p.amount,
+          date: p.date,
+          source: p.source,
+        })),
+      },
       expenses: fin.totalExpenses,
       net_profit: fin.netProfit,
-      profit_margin_pct: fin.margin,
-      signed_at: d.signed_at,
-      delivered_at: d.delivered_at,
+      profit_margin_pct: `${fin.margin}%`,
       transactions: dealTxs.map((t) => ({
         type: t.type,
         label: t.label,
         amount: t.amount,
         date: t.paid_at,
         source: t.source,
+        has_proof_screenshot: !!t.proof_url,
       })),
     }
   })
-
-  const allTxJson = transactions.slice(0, 50).map((t) => ({
-    type: t.type,
-    label: t.label,
-    amount: t.amount,
-    date: t.paid_at,
-    source: t.source,
-  }))
 
   const incomeByMonth: Record<string, number> = {}
   const expenseByMonth: Record<string, number> = {}
@@ -64,46 +80,58 @@ function buildSystemPrompt(
     else expenseByMonth[month] = (expenseByMonth[month] || 0) + tx.amount
   }
 
-  return `You are "Studio AI", a world-class CRM analyst and business consultant embedded inside webviewlabs — a Cairo-based boutique digital studio building high-performance bilingual websites for ambitious brands.
+  // Segmented group counts & listings
+  const depositPaidDeals = dealsJson.filter((d) => d.has_deposit_paid)
+  const awaitingDepositDeals = dealsJson.filter((d) => d.is_awaiting_deposit)
+  const fullyPaidDeals = dealsJson.filter((d) => d.is_fully_paid)
+  const completedAndPaidDeals = dealsJson.filter((d) => d.work_completion.is_completed_and_paid_100pct)
 
-Your job is to:
-1. Analyze the studio's real financial and client data provided below
-2. Surface actionable insights, revenue risks, growth opportunities
-3. Verify data integrity and flag extraction issues
-4. Answer any question the founders ask with precision and confidence
-5. Give specific recommendations tailored to a 2-founder boutique studio
-6. When useful, describe charts or visualizations clearly in text (the UI will render them)
-7. Think like a CFO + CRO + business coach
+  return `You are "Studio AI", the elite AI CFO & Chief Revenue Officer embedded inside webviewlabs — a high-performance boutique web studio in Cairo building bespoke digital products and bilingual web platforms for leading brands.
 
-## Studio Snapshot (Live Data as of ${new Date().toLocaleDateString()})
+You have live, uninterrupted real-time access to the studio's deals, payment proofs, cash ledger, receivables, and task delivery pipelines.
 
-### P&L Summary
-- Cash In Drawer (total received): ${fmt(totals.cashIn)}
-- Total Awaited (unpaid): ${fmt(totals.awaited)}
-- Total Billed: ${fmt(totals.billed)}
-- Total Expenses: ${fmt(totals.expenses)}
+## Live Studio Ledger & Cash Position (${new Date().toLocaleDateString()})
+
+### Cash Drawer & Receivables Balance
+- Cash In Drawer (Total Received Income): ${fmt(totals.cashIn)}
+- Sub-Prices Left to Pay (Total Uncollected Receivables): ${fmt(totals.totalLeftToPay)}
+- Total Billed / Contracted Value: ${fmt(totals.billed)}
+- Total Deposits Collected: ${fmt(totals.totalDepositsCollected)}
+- Total Studio Expenses: ${fmt(totals.expenses)}
 - Net Profit: ${fmt(totals.netProfit)} (${totals.margin}% margin)
-- Active Deals: ${deals.length}
 
-### All Deals (${deals.length} total)
+### Segmentation Distribution
+- 💰 Deposit Paid (Balance Due): ${totals.depositPaidCount} deals (${depositPaidDeals.map((d) => `${d.client}: Left ${fmt(d.sub_price_left_to_pay)}`).join(', ') || 'none'})
+- ⏳ Awaiting Deposit (0% Paid): ${totals.awaitingDepositCount} deals (${awaitingDepositDeals.map((d) => `${d.client}: ${fmt(d.total_deal_price)}`).join(', ') || 'none'})
+- 💎 100% Paid in Full: ${totals.fullyPaidCount} deals
+- 🎉 100% Completed Work & Fully Paid: ${totals.completedAndPaidCount} deals
+
+### Complete Live Deals Dataset (${deals.length} total)
 ${JSON.stringify(dealsJson, null, 2)}
 
-### Monthly Income Trend
+### Monthly Income Breakdown
 ${JSON.stringify(incomeByMonth, null, 2)}
 
-### Monthly Expenses Trend
+### Monthly Expense Breakdown
 ${JSON.stringify(expenseByMonth, null, 2)}
 
-### Recent Transactions (last 50)
-${JSON.stringify(allTxJson, null, 2)}
+## Your Core Responsibilities as AI CFO:
+1. **Cash Flow & Receivables Optimization**:
+   - Always distinguish between money already collected in the drawer vs. "sub-price left to pay" (remaining balances).
+   - Track clients who paid 50% deposits and calculate the exact remaining cash due upon milestone/launch.
+   - Flag clients who haven't paid their deposit yet to prevent starting uncommitted work.
+2. **Proof of Payment & Verification**:
+   - Monitor which payments have verified receipt screenshots vs. unverified ledger entries.
+   - Advise on collection hygiene (receipt proofs, InstaPay / bank wire confirmations).
+3. **Delivery & 100% Completion Alignment**:
+   - Verify that finished work gets final invoices sent and final 50% collected before domain transfer.
+   - Celebrate 100% Completed & Paid milestones.
+4. **Actionable Growth & Margins**:
+   - Provide concrete steps for pricing, deposit policies (e.g. 50% upfront, 50% prior to deployment), and cash buffer targets.
+5. **Interactive Charts**:
+   - Output charts in format: CHART:BAR:[label:value,...] or CHART:PIE:[label:value,...] or CHART:LINE:[label:value,...] when relevant.
 
-## Your Persona
-- Name: Studio AI
-- Tone: Sharp, direct, professional — like a CFO who also cares about the product
-- Language: Match the user (English or Arabic)
-- Always be honest about data gaps or integrity issues
-- Proactively flag risks (e.g. client hasn't paid final, deal stuck in progress, low margins)
-- When asked for a chart, describe it using a format like: CHART:BAR:[label1:value1,label2:value2,...] or CHART:LINE:[...] or CHART:PIE:[...] — the UI renders these automatically`
+Persona: Direct, mathematically rigorous, business-savvy, respectful, proactive. Match the user's language (English or Arabic).`
 }
 
 // ─── Parse chart tags from AI response ───────────────────────────────────────
@@ -129,7 +157,7 @@ function parseCharts(text: string): { cleaned: string; charts: ChartData[] } {
 function BarChart({ data, label }: { data: { label: string; value: number }[]; label?: string }) {
   const max = Math.max(...data.map((d) => d.value), 1)
   const W = 520
-  const barW = Math.min(60, Math.floor((W - 40) / data.length) - 8)
+  const barW = Math.min(60, Math.floor((W - 40) / Math.max(data.length, 1)) - 8)
   const H = 180
   const COLORS = ['#b52d20', '#171717', '#1d70b8', '#25D366', '#8b5cf6', '#f59e0b']
 
@@ -246,23 +274,23 @@ function RenderCharts({ charts }: { charts: ChartData[] }) {
 
 // ─── Quick insight prompts ────────────────────────────────────────────────────
 const QUICK_PROMPTS = [
-  { label: '📊 Full Business Analysis', prompt: 'Give me a comprehensive analysis of our studio business. Cover revenue health, deal pipeline, profit margins, payment collection risks, and top 3 growth recommendations. Include charts: monthly income trend and deal value breakdown by client.' },
-  { label: '🚨 Risk Flags', prompt: 'Identify all financial and operational risks in our current pipeline. Are there deals stuck without payment? Clients who have not paid deposits or finals? Low margin projects? Flag everything.' },
-  { label: '💰 Cash Flow Forecast', prompt: 'Based on our active deals and payment patterns, forecast our expected cash flow for the next 2 months. When should we expect payments and what is our realistic cash position? Show a chart.' },
-  { label: '📈 Revenue Breakdown', prompt: 'Break down our revenue by client and show which deals are most profitable. Create a PIE chart of revenue by client and a BAR chart of profit margin per deal.' },
-  { label: '🔍 Verify Data Integrity', prompt: 'Review all our deal and transaction data. Flag any extraction errors, missing values, deals with inconsistent financials (e.g. deposit + final != total), or suspicious entries.' },
-  { label: '💡 Growth Advice', prompt: 'Based on our current client base, deal sizes, and margins, what should we do to grow revenue by 50% in the next 6 months? Be specific and practical for a 2-person studio in Cairo.' },
+  { label: '📊 Full CFO Audit', prompt: 'Perform a comprehensive CFO audit of our studio. Analyze cash in drawer, sub-prices left to pay across active clients, deposit collection health, and profit margins. Include charts of cash collected vs uncollected balance.' },
+  { label: '💰 Receivables & Left to Pay', prompt: 'Break down all remaining balances ("sub-prices left to pay") across our clients. Which deals have deposits paid but pending final balances? Who owes the most, and when should we trigger final invoices?' },
+  { label: '📸 Proof & Receipt Audit', prompt: 'Review all recorded payments across our deals. How many have verified screenshot proofs? Are there any unverified payments or discrepancies between deal prices and transactions?' },
+  { label: '🚨 Collection Risks', prompt: 'Flag all high-risk deals: clients who have not paid initial deposits, projects with low profit margins, and deals in progress where the remaining balance is high.' },
+  { label: '💎 100% Paid & Delivered', prompt: 'Analyze our fully paid and delivered deals. What was the average deal size, profit margin, and how can we replicate this success with new clients?' },
+  { label: '📈 6-Month Growth Roadmap', prompt: 'Based on our current deal sizes, deposit conversion, and studio profit margins, propose a practical 6-month growth plan to scale studio revenue by 50% in Cairo.' },
 ]
-
 
 // ─── Main AI Analyst Component ────────────────────────────────────────────────
 type Props = {
   deals: DealWithRelations[]
   transactions: Transaction[]
+  tasksMap?: Record<string, Task[]>
   locale: string
 }
 
-export function AiAnalyst({ deals, transactions, locale }: Props) {
+export function AiAnalyst({ deals, transactions, tasksMap = {}, locale }: Props) {
   const isAr = locale === 'ar'
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -278,7 +306,7 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isStreaming])
 
-  const systemPrompt = buildSystemPrompt(deals, transactions)
+  const systemPrompt = buildSystemPrompt(deals, transactions, tasksMap)
 
   async function sendMessage(userText: string) {
     if (!userText.trim() || isStreaming) return
@@ -406,7 +434,7 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
     setError(null)
   }
 
-  const totals = calcStudioTotals(deals, transactions)
+  const totals = calcStudioTotals(deals, transactions, tasksMap)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '80vh', gap: 0 }}>
@@ -428,7 +456,7 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
             <div style={{ background: '#b52d20', color: '#fff', padding: '3px 8px', font: '700 10px "DM Mono",monospace' }}>
-              STUDIO AI · CRM ANALYST
+              STUDIO AI · CFO & REVENUE ANALYST
             </div>
             <div
               style={{
@@ -442,7 +470,7 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
             </span>
           </div>
           <div style={{ font: '10px "DM Mono",monospace', color: '#aaa69d' }}>
-            Powered by NVIDIA Nemotron · Analyzing {deals.length} deals · {fmt(totals.cashIn)} in drawer · {fmt(totals.netProfit)} net profit
+            Powered by NVIDIA Nemotron · Drawer: <strong style={{ color: '#25D366' }}>{fmt(totals.cashIn)}</strong> · Left to Pay: <strong style={{ color: '#f59e0b' }}>{fmt(totals.totalLeftToPay)}</strong> · {totals.depositPaidCount} deposits active
           </div>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -503,12 +531,15 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
       >
         {messages.length === 0 && (
           <div style={{ textAlign: 'center', padding: '60px 20px', color: '#5d5a54' }}>
-            <div style={{ font: '700 32px "DM Mono",monospace', color: '#171717', marginBottom: '8px' }}>Studio AI</div>
-            <div style={{ font: '14px "DM Sans",sans-serif', maxWidth: '500px', margin: '0 auto', lineHeight: 1.6 }}>
-              Your CRM analyst with full visibility into your deals, cash flow, and business health. Ask me anything or pick a quick insight above.
+            <div style={{ font: '700 32px "DM Mono",monospace', color: '#171717', marginBottom: '8px' }}>Studio AI CFO</div>
+            <div style={{ font: '14px "DM Sans",sans-serif', maxWidth: '540px', margin: '0 auto', lineHeight: 1.6 }}>
+              Your dedicated financial director with real-time awareness of deposits received, screenshot proofs, uncollected remaining balances, and deliverable completions.
             </div>
-            <div style={{ marginTop: '20px', font: '11px "DM Mono",monospace', color: '#b52d20' }}>
-              {deals.length} deals · {fmt(totals.cashIn)} received · {fmt(totals.netProfit)} net profit · {fmt(totals.awaited)} awaited
+            <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '16px', flexWrap: 'wrap', font: '11px "DM Mono",monospace' }}>
+              <span style={{ color: '#25D366' }}>💰 Drawer: {fmt(totals.cashIn)}</span>
+              <span style={{ color: '#f59e0b' }}>⏳ Left to Pay: {fmt(totals.totalLeftToPay)}</span>
+              <span style={{ color: '#1d70b8' }}>📊 Billed: {fmt(totals.billed)}</span>
+              <span style={{ color: '#8b5cf6' }}>🏦 Profit: {fmt(totals.netProfit)} ({totals.margin}%)</span>
             </div>
           </div>
         )}
@@ -522,7 +553,7 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
             <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', gap: '8px' }}>
               {/* Role badge */}
               <div style={{ font: '10px "DM Mono",monospace', color: '#5d5a54', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                {isUser ? '👤 You' : '🤖 Studio AI'}
+                {isUser ? '👤 You' : '🤖 Studio AI CFO'}
               </div>
 
               {/* Thinking box */}
@@ -532,7 +563,7 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
                     onClick={() => setShowThinking((p) => !p)}
                     style={{ font: '10px "DM Mono",monospace', color: '#f59e0b', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, marginBottom: '4px' }}
                   >
-                    {showThinking ? '▼ Hide reasoning' : '▶ Show AI reasoning'}
+                    {showThinking ? '▼ Hide reasoning' : '▶ Show CFO reasoning'}
                   </button>
                   {showThinking && (
                     <div style={{ background: '#fffbeb', border: '1px dashed #f59e0b', padding: '12px 16px', font: '11px "DM Mono",monospace', color: '#92400e', lineHeight: 1.6, whiteSpace: 'pre-wrap', maxHeight: '200px', overflowY: 'auto' }}>
@@ -573,7 +604,7 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
         {isThinking && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', font: '11px "DM Mono",monospace', color: '#f59e0b' }}>
             <span style={{ animation: 'pulse 1s infinite' }}>⚙️</span>
-            <span>Studio AI is reasoning…</span>
+            <span>Studio AI CFO is reasoning through the numbers…</span>
           </div>
         )}
 
@@ -600,7 +631,7 @@ export function AiAnalyst({ deals, transactions, locale }: Props) {
               sendMessage(input)
             }
           }}
-          placeholder={isAr ? 'اكتب سؤالك هنا… (Enter للإرسال)' : 'Ask Studio AI anything about your business… (Enter to send, Shift+Enter for newline)'}
+          placeholder={isAr ? 'اسأل المدير المالي الذكي عن أي أرقام أو تحصيلات أو تحليلات…' : 'Ask AI CFO anything: remaining balances, deposit audit, cash forecasts, pricing... (Enter to send)'}
           disabled={isStreaming}
           rows={2}
           style={{
