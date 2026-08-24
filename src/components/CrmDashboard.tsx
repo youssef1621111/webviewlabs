@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { Deal, Transaction, DealWithRelations } from '../lib/crm'
-import { calcStudioTotals, calcDealFinancials, fmt } from '../lib/crm'
+import { calcStudioTotals, calcDealFinancials, fmt, DEFAULT_TASKS } from '../lib/crm'
 import type { Locale } from '../types'
 
 const SUPABASE_URL = 'https://xiqldupgxasaqaswcdbs.supabase.co'
@@ -697,7 +697,6 @@ function DealDetailView({
   }
 
   async function generateDefaultTasks() {
-    const { DEFAULT_TASKS } = await import('../lib/crm')
     for (const t of DEFAULT_TASKS) {
       await fetch(`${SUPABASE_URL}/rest/v1/tasks`, {
         method: 'POST',
@@ -708,6 +707,7 @@ function DealDetailView({
     loadTasks()
     showToast('✓ Default tasks created for this deal')
   }
+
 
   const PHASES: { key: string; label: string; color: string }[] = [
     { key: 'build', label: '🔨 Build', color: '#1d70b8' },
@@ -917,5 +917,3 @@ const inputStyle: React.CSSProperties = {
   width: '100%',
 }
 
-const SUPABASE_URL = 'https://xiqldupgxasaqaswcdbs.supabase.co'
-const SUPABASE_KEY = 'sb_publishable_IyEQPWDQnrrC6PIHFdJWNw_K2iAA8BX'
