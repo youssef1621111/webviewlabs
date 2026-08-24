@@ -818,6 +818,8 @@ export async function downloadDocumentAsPdfFile(
   client: ClientInfo,
   filename: string
 ): Promise<void> {
+  const fullHtml = generatePrintableDocumentHtml(title, docKey, content, client)
+
   // Ensure html2pdf library is dynamically available
   if (!(window as any).html2pdf) {
     await new Promise<void>((resolve, reject) => {
@@ -835,42 +837,46 @@ export async function downloadDocumentAsPdfFile(
         'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
       script.async = true
       script.onload = () => resolve()
-      script.onerror = () => reject(new Error('Failed to load html2pdf'))
+      script.onerror = () => reject(new Error('Failed to load html2pdf library'))
       document.head.appendChild(script)
     })
   }
 
-  // Generate complete styled printable HTML
-  const fullHtml = generatePrintableDocumentHtml(title, docKey, content, client)
+  // Create dedicated rendering iframe with its own clean document context
+  const iframe = document.createElement('iframe')
+  iframe.id = 'pdf-export-iframe'
+  iframe.style.position = 'fixed'
+  iframe.style.top = '0px'
+  iframe.style.left = '0px'
+  iframe.style.width = '820px'
+  iframe.style.height = '1400px'
+  iframe.style.opacity = '0.01' // non-zero so html2canvas paints it completely
+  iframe.style.pointerEvents = 'none'
+  iframe.style.zIndex = '99999'
+  iframe.style.border = 'none'
+  iframe.style.background = '#ffffff'
+  document.body.appendChild(iframe)
 
-  // Create temporary container positioned at (0,0) with z-index behind the page
-  const tempWrapper = document.createElement('div')
-  tempWrapper.id = 'pdf-render-temp-wrapper'
-  tempWrapper.style.position = 'fixed'
-  tempWrapper.style.top = '0px'
-  tempWrapper.style.left = '0px'
-  tempWrapper.style.width = '794px'
-  tempWrapper.style.minHeight = '1000px'
-  tempWrapper.style.zIndex = '-9999'
-  tempWrapper.style.opacity = '1'
-  tempWrapper.style.backgroundColor = '#ffffff'
-  tempWrapper.style.pointerEvents = 'none'
-  tempWrapper.style.margin = '0'
-  tempWrapper.style.padding = '0'
+  await new Promise<void>((resolve) => {
+    const doc = iframe.contentWindow?.document
+    if (doc) {
+      doc.open()
+      doc.write(fullHtml)
+      doc.close()
+      iframe.onload = () => resolve()
+      setTimeout(resolve, 450)
+    } else {
+      resolve()
+    }
+  })
 
-  // Extract body and style from full HTML
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(fullHtml, 'text/html')
-  const styles = doc.querySelectorAll('style, link')
-  const bodyContent = doc.body.innerHTML
+  const targetDoc = iframe.contentWindow?.document
+  const targetElement = targetDoc?.querySelector('.doc-container') || targetDoc?.body
 
-  styles.forEach((s) => tempWrapper.appendChild(s.cloneNode(true)))
-  
-  const innerDiv = document.createElement('div')
-  innerDiv.innerHTML = bodyContent
-  tempWrapper.appendChild(innerDiv)
-
-  document.body.appendChild(tempWrapper)
+  if (!targetElement) {
+    if (document.body.contains(iframe)) document.body.removeChild(iframe)
+    throw new Error('Document content could not be rendered')
+  }
 
   const opt = {
     margin: [6, 6, 6, 6],
@@ -882,7 +888,7 @@ export async function downloadDocumentAsPdfFile(
       logging: false,
       scrollY: 0,
       scrollX: 0,
-      windowWidth: 820,
+      windowWidth: 840,
       backgroundColor: '#ffffff',
     },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -890,15 +896,21 @@ export async function downloadDocumentAsPdfFile(
   }
 
   try {
-    // Wait a brief moment for fonts and images to compute layout
-    await new Promise((r) => setTimeout(r, 100))
-    await (window as any).html2pdf().set(opt).from(tempWrapper).save()
-  } finally {
-    if (document.body.contains(tempWrapper)) {
-      document.body.removeChild(tempWrapper)
+    await (window as any).html2pdf().set(opt).from(targetElement).save()
+  } catch (err) {
+    console.warn('html2pdf save encounter, triggering iframe print:', err)
+    if (iframe.contentWindow) {
+      iframe.contentWindow.print()
     }
+  } finally {
+    setTimeout(() => {
+      if (document.body.contains(iframe)) {
+        document.body.removeChild(iframe)
+      }
+    }, 2000)
   }
 }
+
 
 
 
