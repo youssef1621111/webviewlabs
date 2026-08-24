@@ -531,9 +531,9 @@ Deno.serve(async (req: Request) => {
     }
 
     // 2. Send SMS / WhatsApp to phone
-    const twilioSid = Deno.env.get("TWILIO_ACCOUNT_SID")
+    const twilioSid = Deno.env.get("TWILIO_ACCOUNT_SID") || "ACbd18fed07b19e207d407dcfe41c6dfe3"
     const twilioAuth = Deno.env.get("TWILIO_AUTH_TOKEN")
-    const twilioFrom = Deno.env.get("TWILIO_PHONE_NUMBER")
+    const twilioFrom = Deno.env.get("TWILIO_PHONE_NUMBER") || "whatsapp:+14155238886"
     const smsWebhookUrl = Deno.env.get("SMS_WEBHOOK_URL")
 
     if (smsWebhookUrl) {
@@ -553,9 +553,16 @@ Deno.serve(async (req: Request) => {
       }
     } else if (twilioSid && twilioAuth && twilioFrom) {
       try {
+        const isWhatsApp = twilioFrom.startsWith("whatsapp:")
+        let formattedTo = payload.phone.trim().replace(/[^0-9+]/g, "")
+        if (!formattedTo.startsWith("+")) formattedTo = "+" + formattedTo
+        if (isWhatsApp && !formattedTo.startsWith("whatsapp:")) {
+          formattedTo = "whatsapp:" + formattedTo
+        }
+
         const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`
         const formData = new URLSearchParams()
-        formData.append("To", payload.phone)
+        formData.append("To", formattedTo)
         formData.append("From", twilioFrom)
         formData.append("Body", phoneMessages.combined)
 
@@ -577,7 +584,7 @@ Deno.serve(async (req: Request) => {
         phoneError = e instanceof Error ? e.message : String(e)
       }
     } else {
-      phoneError = "No phone provider secret configured (e.g. TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER or SMS_WEBHOOK_URL)."
+      phoneError = "Twilio AuthToken not provided yet (set TWILIO_AUTH_TOKEN)."
     }
 
     // 3. Update status and save payload in Supabase Database
