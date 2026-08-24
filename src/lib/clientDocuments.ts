@@ -870,98 +870,167 @@ export async function downloadDocumentAsPdfFile(
   client: ClientInfo,
   filename: string
 ): Promise<void> {
-  const fullHtml = generatePrintableDocumentHtml(title, docKey, content, client)
-
-  // Ensure html2pdf library is dynamically available
-  if (!(window as any).html2pdf) {
-    await new Promise<void>((resolve, reject) => {
-      const existing = document.querySelector('script[src*="html2pdf"]')
-      if (existing) {
-        if ((window as any).html2pdf) {
-          resolve()
-          return
-        }
-        existing.addEventListener('load', () => resolve())
-        return
-      }
+  // 1. Ensure html2canvas and jsPDF are loaded
+  async function loadScript(src: string, globalCheck: () => boolean): Promise<void> {
+    if (globalCheck()) return
+    return new Promise((resolve, reject) => {
       const script = document.createElement('script')
-      script.src =
-        'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
+      script.src = src
       script.async = true
       script.onload = () => resolve()
-      script.onerror = () => reject(new Error('Failed to load html2pdf library'))
+      script.onerror = () => reject(new Error(`Failed to load ${src}`))
       document.head.appendChild(script)
     })
   }
 
-  // Create dedicated rendering iframe with its own clean document context
-  const iframe = document.createElement('iframe')
-  iframe.id = 'pdf-export-iframe'
-  iframe.style.position = 'fixed'
-  iframe.style.top = '0px'
-  iframe.style.left = '0px'
-  iframe.style.width = '820px'
-  iframe.style.height = '1400px'
-  iframe.style.opacity = '0.01' // non-zero so html2canvas paints it completely
-  iframe.style.pointerEvents = 'none'
-  iframe.style.zIndex = '99999'
-  iframe.style.border = 'none'
-  iframe.style.background = '#ffffff'
-  document.body.appendChild(iframe)
+  await Promise.all([
+    loadScript(
+      'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
+      () => typeof (window as any).html2canvas !== 'undefined'
+    ),
+    loadScript(
+      'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+      () => typeof (window as any).jspdf !== 'undefined' || typeof (window as any).jsPDF !== 'undefined'
+    ),
+  ])
 
-  await new Promise<void>((resolve) => {
-    const doc = iframe.contentWindow?.document
-    if (doc) {
-      doc.open()
-      doc.write(fullHtml)
-      doc.close()
-      iframe.onload = () => resolve()
-      setTimeout(resolve, 450)
-    } else {
-      resolve()
-    }
+  const html2canvas = (window as any).html2canvas
+  const jsPDFClass = (window as any).jspdf?.jsPDF || (window as any).jsPDF
+
+  if (!html2canvas || !jsPDFClass) {
+    throw new Error('PDF rendering libraries could not be loaded.')
+  }
+
+  // 2. Generate complete self-contained printable document HTML
+  const fullHtml = generatePrintableDocumentHtml(title, docKey, content, client)
+
+  // 3. Create rendering container with exact A4 96-DPI width (794px)
+  const container = document.createElement('div')
+  container.id = 'wv-pdf-export-container'
+  container.style.position = 'fixed'
+  container.style.top = '0px'
+  container.style.left = '0px'
+  container.style.width = '794px'
+  container.style.zIndex = '99999'
+  container.style.background = '#ffffff'
+  container.style.margin = '0'
+  container.style.padding = '0'
+  container.style.pointerEvents = 'none'
+  container.style.opacity = '0.01' // Subtle non-zero opacity so browser fully renders all pixels
+
+  // Extract body and styles
+  const parser = new DOMParser()
+  const parsedDoc = parser.parseFromString(fullHtml, 'text/html')
+  
+  // Inject fonts & stylesheets
+  parsedDoc.querySelectorAll('link, style').forEach((node) => {
+    container.appendChild(node.cloneNode(true))
   })
 
-  const targetDoc = iframe.contentWindow?.document
-  const targetElement = targetDoc?.querySelector('.doc-container') || targetDoc?.body
-
-  if (!targetElement) {
-    if (document.body.contains(iframe)) document.body.removeChild(iframe)
-    throw new Error('Document content could not be rendered')
+  // Inject document container content (remove floating print bar if any)
+  const docContainer = parsedDoc.querySelector('.doc-container')
+  if (docContainer) {
+    container.appendChild(docContainer.cloneNode(true))
+  } else {
+    const wrap = document.createElement('div')
+    wrap.innerHTML = parsedDoc.body.innerHTML
+    container.appendChild(wrap)
   }
 
-  const opt = {
-    margin: [6, 6, 6, 6],
-    filename: filename.endsWith('.pdf') ? filename : `${filename}.pdf`,
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: {
-      scale: 2,
-      useCORS: true,
-      logging: false,
-      scrollY: 0,
-      scrollX: 0,
-      windowWidth: 840,
-      backgroundColor: '#ffffff',
-    },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
-  }
+  document.body.appendChild(container)
 
   try {
-    await (window as any).html2pdf().set(opt).from(targetElement).save()
+    // 4. Wait for fonts and layout
+    if (document.fonts?.ready) {
+      await document.fonts.ready
+    }
+    await new Promise((r) => setTimeout(r, 350))
+
+    // 5. Render at 3x scale (300 DPI retina resolution)
+    const scale = 3
+    const canvas = await html2canvas(container, {
+      scale,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff',
+      scrollY: 0,
+      scrollX: 0,
+      width: 794,
+      logging: false,
+    })
+
+    // 6. Multi-page A4 Pagination in jsPDF
+    const pdf = new jsPDFClass({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+      compress: true,
+    })
+
+    const pdfWidth = 210
+    const pdfHeight = 297
+
+    // A4 pixel dimensions on the 3x scaled canvas
+    const a4CanvasWidth = 794 * scale // 2382 px
+    const a4CanvasHeight = Math.round(794 * (297 / 210) * scale) // ~3369 px
+
+    const totalCanvasHeight = canvas.height
+    const totalPages = Math.ceil(totalCanvasHeight / a4CanvasHeight) || 1
+
+    for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+      if (pageIdx > 0) {
+        pdf.addPage('a4', 'portrait')
+      }
+
+      // Slice out exact A4 page canvas
+      const pageCanvas = document.createElement('canvas')
+      pageCanvas.width = a4CanvasWidth
+      pageCanvas.height = a4CanvasHeight
+
+      const pageCtx = pageCanvas.getContext('2d')
+      if (pageCtx) {
+        pageCtx.fillStyle = '#ffffff'
+        pageCtx.fillRect(0, 0, a4CanvasWidth, a4CanvasHeight)
+
+        const srcY = pageIdx * a4CanvasHeight
+        const srcHeight = Math.min(a4CanvasHeight, totalCanvasHeight - srcY)
+
+        pageCtx.drawImage(
+          canvas,
+          0,
+          srcY,
+          a4CanvasWidth,
+          srcHeight,
+          0,
+          0,
+          a4CanvasWidth,
+          srcHeight
+        )
+
+        const imgData = pageCanvas.toDataURL('image/jpeg', 0.96)
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST')
+      }
+    }
+
+    const cleanFilename = filename.endsWith('.pdf') ? filename : `${filename}.pdf`
+    pdf.save(cleanFilename)
   } catch (err) {
-    console.warn('html2pdf save encounter, triggering iframe print:', err)
-    if (iframe.contentWindow) {
-      iframe.contentWindow.print()
+    console.error('High-DPI PDF export encountered an issue, falling back to print window:', err)
+    // Fallback: open printable window
+    const printWindow = window.open('', '_blank', 'width=900,height=800')
+    if (printWindow) {
+      printWindow.document.open()
+      printWindow.document.write(fullHtml)
+      printWindow.document.close()
+      printWindow.focus()
     }
   } finally {
-    setTimeout(() => {
-      if (document.body.contains(iframe)) {
-        document.body.removeChild(iframe)
-      }
-    }, 2000)
+    if (document.body.contains(container)) {
+      document.body.removeChild(container)
+    }
   }
 }
+
 
 
 
