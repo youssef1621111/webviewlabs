@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { Deal, Transaction, DealWithRelations } from '../lib/crm'
 import { calcStudioTotals, calcDealFinancials, fmt, DEFAULT_TASKS } from '../lib/crm'
+import { AiAnalyst } from './AiAnalyst'
 import type { Locale } from '../types'
 
 const SUPABASE_URL = 'https://xiqldupgxasaqaswcdbs.supabase.co'
@@ -51,9 +52,10 @@ export function CrmDashboard({ locale }: Props) {
   const [deals, setDeals] = useState<DealWithRelations[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState<'overview' | 'deals' | 'cash' | 'deal'>('overview')
+  const [view, setView] = useState<'overview' | 'deals' | 'cash' | 'deal' | 'ai'>('overview')
   const [activeDealId, setActiveDealId] = useState<string | null>(null)
   const [dealTab, setDealTab] = useState<'financials' | 'tasks'>('financials')
+
 
   // New transaction form state
   const [txForm, setTxForm] = useState({
@@ -224,6 +226,27 @@ export function CrmDashboard({ locale }: Props) {
           <NavBtn id="overview" label="💰 Cash Overview" current={view} />
           <NavBtn id="deals" label="📁 All Deals" current={view} />
           <NavBtn id="cash" label="📒 Ledger / Transactions" current={view} />
+          {/* AI Analyst Tab — special styling */}
+          <button
+            onClick={() => setView('ai')}
+            style={{
+              padding: '8px 18px',
+              font: '700 11px "DM Mono",monospace',
+              textTransform: 'uppercase',
+              background: view === 'ai' ? '#b52d20' : '#fff5f5',
+              color: view === 'ai' ? '#fff' : '#b52d20',
+              border: `1px solid #b52d20`,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            🤖 AI Analyst
+            <span style={{ background: view === 'ai' ? 'rgba(255,255,255,0.3)' : '#b52d20', color: '#fff', fontSize: '9px', padding: '1px 5px', borderRadius: '8px' }}>
+              NVIDIA
+            </span>
+          </button>
           <button
             onClick={load}
             style={{
@@ -234,6 +257,11 @@ export function CrmDashboard({ locale }: Props) {
             {loading ? '…' : '↻ Refresh'}
           </button>
         </div>
+
+        {/* ═══════════════════ AI ANALYST ═══════════════════ */}
+        {view === 'ai' && (
+          <AiAnalyst deals={deals} transactions={transactions} locale={locale} />
+        )}
 
         {/* ═══════════════════ OVERVIEW ═══════════════════ */}
         {view === 'overview' && (
