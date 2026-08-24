@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { ClientDocumentSuite } from './ClientDocumentSuite'
+import { CrmDashboard } from './CrmDashboard'
 import type { Locale } from '../types'
 import type { ClientInfo } from '../lib/clientDocuments'
 
@@ -26,6 +27,7 @@ export type Submission = {
 }
 
 type TabType = 'pending' | 'contacted' | 'in_progress' | 'finished' | 'lost' | 'all'
+type AdminView = 'pipeline' | 'crm'
 
 export function AdminPortal({ locale }: { locale: Locale }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -39,6 +41,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState<TabType>('pending')
   const [actionMessage, setActionMessage] = useState('')
+  const [adminView, setAdminView] = useState<AdminView>('pipeline')
 
   // State for Document Suite Modal
   const [activeDocClient, setActiveDocClient] = useState<Submission | null>(null)
@@ -374,7 +377,32 @@ export function AdminPortal({ locale }: { locale: Locale }) {
               {isArabic ? 'إدارة الطلبات، العقود، والفواتير' : 'Client Deals & Invoicing'}
             </h1>
           </div>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* View Switcher */}
+            <div style={{ display: 'inline-flex', border: '2px solid var(--ink)', background: '#fff' }}>
+              <button
+                onClick={() => setAdminView('pipeline')}
+                style={{
+                  padding: '0 18px', minHeight: '40px', font: '700 11px "DM Mono", monospace',
+                  textTransform: 'uppercase', cursor: 'pointer', border: 'none',
+                  background: adminView === 'pipeline' ? 'var(--ink)' : '#fff',
+                  color: adminView === 'pipeline' ? 'var(--paper)' : 'var(--ink)',
+                }}
+              >
+                📋 Pipeline
+              </button>
+              <button
+                onClick={() => setAdminView('crm')}
+                style={{
+                  padding: '0 18px', minHeight: '40px', font: '700 11px "DM Mono", monospace',
+                  textTransform: 'uppercase', cursor: 'pointer', border: 'none',
+                  background: adminView === 'crm' ? 'var(--red)' : '#fff',
+                  color: adminView === 'crm' ? '#fff' : 'var(--ink)',
+                }}
+              >
+                💰 CRM & Cash
+              </button>
+            </div>
             <button
               onClick={fetchSubmissions}
               disabled={loading}
@@ -392,6 +420,14 @@ export function AdminPortal({ locale }: { locale: Locale }) {
             </button>
           </div>
         </div>
+
+        {/* CRM Dashboard View */}
+        {adminView === 'crm' && (
+          <CrmDashboard locale={locale} />
+        )}
+
+        {/* Pipeline View */}
+        {adminView === 'pipeline' && (<>
 
         {/* Action toast notification */}
         {actionMessage && (
@@ -778,6 +814,55 @@ export function AdminPortal({ locale }: { locale: Locale }) {
                         }}
                       >
                         📄 {isArabic ? 'العقود والفواتير (Invoices & Docs)' : 'Invoices, SOW & Contract Suite'}
+                      </button>
+
+                      {/* Open in CRM button */}
+                      <button
+                        onClick={async () => {
+                          // Create or find deal for this submission then navigate to CRM
+                          try {
+                            const existing = await fetch(
+                              `${SUPABASE_URL}/rest/v1/deals?submission_id=eq.${sub.id}&select=id`,
+                              { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+                            ).then((r) => r.json())
+
+                            if (!existing || existing.length === 0) {
+                              // Auto-create deal from submission
+                              await fetch(`${SUPABASE_URL}/rest/v1/deals`, {
+                                method: 'POST',
+                                headers: {
+                                  apikey: SUPABASE_KEY,
+                                  Authorization: `Bearer ${SUPABASE_KEY}`,
+                                  'Content-Type': 'application/json',
+                                  Prefer: 'return=minimal',
+                                },
+                                body: JSON.stringify({
+                                  submission_id: sub.id,
+                                  deal_title: sub.company,
+                                  total_value: 0,
+                                  deposit_amount: 0,
+                                  final_amount: 0,
+                                  expenses: 0,
+                                  notes: sub.brief,
+                                }),
+                              })
+                            }
+                          } catch (e) { /* ignore */ }
+                          setAdminView('crm')
+                        }}
+                        style={{
+                          background: '#f59e0b',
+                          color: '#fff',
+                          border: '1px solid #d97706',
+                          padding: '6px 14px',
+                          font: '700 11px "DM Mono", monospace',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        💰 {isArabic ? 'فتح في CRM' : 'Open in CRM'}
                       </button>
                     </div>
 
@@ -1183,6 +1268,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
             })}
           </div>
         )}
+        </>)}
       </div>
 
       {/* Document Suite Modal (When a client is selected) */}
@@ -1202,3 +1288,4 @@ export function AdminPortal({ locale }: { locale: Locale }) {
     </section>
   )
 }
+
