@@ -384,33 +384,100 @@ h1 { max-width: 780px; margin-top: 28px; font-size: clamp(56px, 7.15vw, 110px); 
   }
 }
 
-/* Studio Document Suite Print & PDF Styles */
-.print-only {
-  display: none;
+/* Rendered Document Content Styles */
+.rendered-doc-content .doc-h1 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: #171717;
+  margin: 0 0 16px 0;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #171717;
 }
 
-@media print {
-  body * {
-    visibility: hidden;
-  }
-  #print-area,
-  #print-area * {
-    visibility: visible;
-  }
-  #print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    margin: 0;
-    padding: 0;
-    display: block !important;
-  }
-  .doc-modal-container,
-  .site-shell,
-  .site-header,
-  .site-footer {
-    display: none !important;
-  }
+.rendered-doc-content .doc-h2 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 19px;
+  font-weight: 700;
+  color: #171717;
+  margin: 28px 0 12px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e8e3d9;
 }
+
+.rendered-doc-content .doc-h3 {
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #b52d20;
+  margin: 20px 0 8px 0;
+  font-weight: 700;
+}
+
+.rendered-doc-content .doc-p {
+  font-size: 14px;
+  color: #2b2b2b;
+  margin: 0 0 10px 0;
+  line-height: 1.7;
+}
+
+.rendered-doc-content .doc-rule {
+  border: 0;
+  height: 1px;
+  background: #e8e3d9;
+  margin: 24px 0;
+}
+
+.rendered-doc-content .doc-list {
+  margin: 0 0 16px 0;
+  padding-inline-start: 24px;
+  font-size: 14px;
+  color: #2b2b2b;
+}
+
+.rendered-doc-content .doc-list li {
+  margin-bottom: 6px;
+  line-height: 1.6;
+}
+
+.rendered-doc-content .doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 24px 0;
+  font-size: 13px;
+}
+
+.rendered-doc-content .doc-table th {
+  background: #171717;
+  color: #f2efe8;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 14px;
+  text-align: start;
+  border: 1px solid #171717;
+}
+
+.rendered-doc-content .doc-table td {
+  padding: 12px 14px;
+  border: 1px solid #e8e3d9;
+  background: #fcfbfa;
+  color: #171717;
+}
+
+.rendered-doc-content .doc-table tbody tr:last-child td {
+  background: #f2efe8;
+  font-weight: 700;
+  border-bottom: 2px solid #171717;
+}
+
+.rendered-doc-content .checkbox-box {
+  font-family: monospace;
+  font-size: 14px;
+  margin-inline-end: 6px;
+  color: #b52d20;
+}
+
 

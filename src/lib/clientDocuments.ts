@@ -369,3 +369,445 @@ Thank you for building with webviewlabs.
 Youssef Mohamed & Bejimy Milad · Founders, webviewlabs`,
   },
 ]
+
+export function renderMarkdownToHtml(markdown: string): string {
+  const lines = markdown.split('\n')
+  const htmlLines: string[] = []
+  let inTable = false
+  let tableHeaderParsed = false
+  let inList = false
+  let listType: 'ul' | 'ol' = 'ul'
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i]
+    const line = rawLine.trim()
+
+    // Handle Table
+    if (line.startsWith('|') && line.endsWith('|')) {
+      if (inList) {
+        htmlLines.push(listType === 'ul' ? '</ul>' : '</ol>')
+        inList = false
+      }
+
+      if (!inTable) {
+        htmlLines.push('<table class="doc-table">')
+        inTable = true
+        tableHeaderParsed = false
+      }
+
+      // Check if separator row (| :--- | :---: |)
+      if (line.replace(/[:\-\s|]/g, '') === '') {
+        tableHeaderParsed = true
+        continue
+      }
+
+      const cells = line
+        .slice(1, -1)
+        .split('|')
+        .map((c) => formatInline(c.trim()))
+
+      if (!tableHeaderParsed) {
+        htmlLines.push('<thead><tr>')
+        cells.forEach((cell) => htmlLines.push(`<th>${cell}</th>`))
+        htmlLines.push('</tr></thead><tbody>')
+      } else {
+        htmlLines.push('<tr>')
+        cells.forEach((cell) => htmlLines.push(`<td>${cell}</td>`))
+        htmlLines.push('</tr>')
+      }
+      continue
+    } else if (inTable) {
+      htmlLines.push('</tbody></table>')
+      inTable = false
+      tableHeaderParsed = false
+    }
+
+    // Handle Lists
+    if (line.startsWith('* ') || line.startsWith('- ')) {
+      if (!inList || listType !== 'ul') {
+        if (inList) htmlLines.push(listType === 'ul' ? '</ul>' : '</ol>')
+        htmlLines.push('<ul class="doc-list">')
+        inList = true
+        listType = 'ul'
+      }
+      const itemContent = formatInline(line.slice(2))
+      htmlLines.push(`<li>${itemContent}</li>`)
+      continue
+    }
+
+    if (/^\d+\.\s/.test(line)) {
+      if (!inList || listType !== 'ol') {
+        if (inList) htmlLines.push(listType === 'ul' ? '</ul>' : '</ol>')
+        htmlLines.push('<ol class="doc-list">')
+        inList = true
+        listType = 'ol'
+      }
+      const itemContent = formatInline(line.replace(/^\d+\.\s/, ''))
+      htmlLines.push(`<li>${itemContent}</li>`)
+      continue
+    }
+
+    if (inList) {
+      htmlLines.push(listType === 'ul' ? '</ul>' : '</ol>')
+      inList = false
+    }
+
+    // Empty line
+    if (!line) {
+      continue
+    }
+
+    // Horizontal Rule
+    if (line === '---' || line === '***' || line === '___') {
+      htmlLines.push('<hr class="doc-rule" />')
+      continue
+    }
+
+    // Headings
+    if (line.startsWith('# ')) {
+      htmlLines.push(`<h1 class="doc-h1">${formatInline(line.slice(2))}</h1>`)
+      continue
+    }
+    if (line.startsWith('## ')) {
+      htmlLines.push(`<h2 class="doc-h2">${formatInline(line.slice(3))}</h2>`)
+      continue
+    }
+    if (line.startsWith('### ')) {
+      htmlLines.push(`<h3 class="doc-h3">${formatInline(line.slice(4))}</h3>`)
+      continue
+    }
+    if (line.startsWith('#### ')) {
+      htmlLines.push(`<h4 class="doc-h4">${formatInline(line.slice(5))}</h4>`)
+      continue
+    }
+
+    // Regular paragraph
+    htmlLines.push(`<p class="doc-p">${formatInline(line)}</p>`)
+  }
+
+  if (inTable) htmlLines.push('</tbody></table>')
+  if (inList) htmlLines.push(listType === 'ul' ? '</ul>' : '</ol>')
+
+  return htmlLines.join('\n')
+}
+
+function formatInline(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\[\s?\]/g, '<span class="checkbox-box">☐</span>')
+    .replace(/\[x\]/gi, '<span class="checkbox-box checked">☑</span>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+}
+
+export function generatePrintableDocumentHtml(
+  title: string,
+  docKey: DocumentKey,
+  markdownContent: string,
+  client: ClientInfo
+): string {
+  const renderedHtml = renderMarkdownToHtml(markdownContent)
+  const isArabic = /[\u0600-\u06FF]/.test(markdownContent)
+
+  return `<!DOCTYPE html>
+<html lang="${isArabic ? 'ar' : 'en'}" dir="${isArabic ? 'rtl' : 'ltr'}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} · webviewlabs (${client.company})</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&family=Noto+Kufi+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    @page {
+      size: A4;
+      margin: 12mm 12mm 12mm 12mm;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+      background-color: #f2efe8;
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #171717;
+      line-height: 1.6;
+    }
+    .doc-container {
+      max-width: 820px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 2px solid #171717;
+      box-shadow: 8px 8px 0px #171717;
+      overflow: hidden;
+    }
+    .doc-header {
+      background: #171717;
+      color: #f2efe8;
+      padding: 28px 36px;
+      border-bottom: 4px solid #b52d20;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .doc-brand {
+      display: inline-block;
+      background: #f2efe8;
+      color: #171717;
+      font-family: 'DM Mono', monospace;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 6px 12px;
+      letter-spacing: -0.04em;
+      margin-bottom: 6px;
+    }
+    .doc-tagline {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: #aaa69d;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin: 0;
+    }
+    .doc-ref-box {
+      text-align: right;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: #aaa69d;
+      line-height: 1.5;
+    }
+    .doc-ref-highlight {
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .doc-body {
+      padding: 40px 48px;
+      background: #ffffff;
+    }
+    .client-badge-box {
+      background: #f8f6f2;
+      border: 1px solid #c5c0b5;
+      padding: 16px 22px;
+      margin: 0 0 28px 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+    }
+    .client-badge-item label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #5d5a54;
+      display: block;
+      margin-bottom: 2px;
+    }
+    .client-badge-item strong {
+      font-weight: 700;
+      font-size: 14px;
+      color: #171717;
+    }
+    .doc-h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 26px;
+      font-weight: 700;
+      color: #171717;
+      margin: 0 0 16px 0;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #171717;
+    }
+    .doc-h2 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: #171717;
+      margin: 28px 0 12px 0;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e8e3d9;
+    }
+    .doc-h3 {
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #b52d20;
+      margin: 20px 0 8px 0;
+      font-weight: 700;
+    }
+    .doc-p {
+      font-size: 14px;
+      color: #2b2b2b;
+      margin: 0 0 10px 0;
+      line-height: 1.7;
+    }
+    .doc-rule {
+      border: 0;
+      height: 1px;
+      background: #e8e3d9;
+      margin: 24px 0;
+    }
+    .doc-list {
+      margin: 0 0 16px 0;
+      padding-left: 20px;
+      font-size: 14px;
+      color: #2b2b2b;
+    }
+    .doc-list li {
+      margin-bottom: 6px;
+      line-height: 1.6;
+    }
+    .doc-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 24px 0;
+      font-size: 13px;
+    }
+    .doc-table th {
+      background: #171717;
+      color: #f2efe8;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 10px 14px;
+      text-align: left;
+      border: 1px solid #171717;
+    }
+    .doc-table td {
+      padding: 12px 14px;
+      border: 1px solid #e8e3d9;
+      background: #fcfbfa;
+      color: #171717;
+    }
+    .doc-table tbody tr:last-child td {
+      background: #f2efe8;
+      font-weight: 700;
+      border-bottom: 2px solid #171717;
+    }
+    code {
+      font-family: 'DM Mono', monospace;
+      background: #e8e3d9;
+      padding: 2px 6px;
+      font-size: 12px;
+    }
+    .checkbox-box {
+      font-family: monospace;
+      font-size: 14px;
+      margin-right: 6px;
+      color: #b52d20;
+    }
+    .doc-footer {
+      background: #171717;
+      color: #aaa69d;
+      padding: 22px 36px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      text-align: center;
+      line-height: 1.6;
+      border-top: 3px solid #b52d20;
+    }
+    .doc-footer a {
+      color: #f2efe8;
+      text-decoration: none;
+    }
+    .signature-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      margin-top: 36px;
+      padding-top: 24px;
+      border-top: 2px solid #171717;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+    }
+    .signature-line {
+      border-bottom: 1px solid #171717;
+      height: 40px;
+      margin-bottom: 6px;
+    }
+
+    @media print {
+      body {
+        background: transparent !important;
+        padding: 0 !important;
+      }
+      .doc-container {
+        border: 1px solid #171717 !important;
+        box-shadow: none !important;
+        max-width: 100% !important;
+        width: 100% !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="doc-container">
+    
+    <!-- Top Studio Header -->
+    <div class="doc-header">
+      <div>
+        <div class="doc-brand">WV / webviewlabs</div>
+        <p class="doc-tagline">Digital Studio for Ambitious Brands · Cairo / Everywhere</p>
+      </div>
+      <div class="doc-ref-box">
+        <div class="doc-ref-highlight">${title}</div>
+        <div>Document Ref: WV-${client.id}-${docKey.toUpperCase()}</div>
+        <div>Date: ${new Date().toLocaleDateString('en-US', { dateStyle: 'medium' })}</div>
+      </div>
+    </div>
+
+    <!-- Body -->
+    <div class="doc-body">
+      <!-- Client Information Box -->
+      <div class="client-badge-box">
+        <div class="client-badge-item">
+          <label>Client Name</label>
+          <strong>${client.name}</strong>
+        </div>
+        <div class="client-badge-item">
+          <label>Company / Brand</label>
+          <strong style="color: #b52d20;">${client.company}</strong>
+        </div>
+        <div class="client-badge-item">
+          <label>Phone</label>
+          <strong>${client.phone}</strong>
+        </div>
+        <div class="client-badge-item">
+          <label>Email</label>
+          <strong>${client.email || 'Not provided'}</strong>
+        </div>
+      </div>
+
+      <!-- Rendered Markdown Body -->
+      <div class="markdown-content">
+        ${renderedHtml}
+      </div>
+    </div>
+
+    <!-- Studio Footer -->
+    <div class="doc-footer">
+      <div style="font-weight: bold; color: #f2efe8; margin-bottom: 4px;">webviewlabs · Digital products with a point of view.</div>
+      <div>Cairo, Egypt · <a href="https://webviewlabs.vercel.app">webviewlabs.vercel.app</a> · <a href="mailto:hello@webviewlabs.com">hello@webviewlabs.com</a></div>
+    </div>
+
+  </div>
+
+  <script>
+    window.onload = function() {
+      // Auto trigger print when opened in isolated popup
+      if (window.location.search.includes('autoprint=true')) {
+        setTimeout(function() { window.print(); }, 400);
+      }
+    };
+  </script>
+</body>
+</html>`
+}
+
