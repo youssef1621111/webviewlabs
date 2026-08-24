@@ -530,10 +530,10 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // 2. Send SMS / WhatsApp to phone
+    // 2. Send SMS to phone
     const twilioSid = Deno.env.get("TWILIO_ACCOUNT_SID") || "ACbd18fed07b19e207d407dcfe41c6dfe3"
-    const twilioAuth = Deno.env.get("TWILIO_AUTH_TOKEN")
-    const twilioFrom = Deno.env.get("TWILIO_PHONE_NUMBER") || "whatsapp:+14155238886"
+    const twilioAuth = Deno.env.get("TWILIO_AUTH_TOKEN") || "4aa8a8b1d4f58661f4e9d35eb2f4fce1"
+    const twilioFrom = Deno.env.get("TWILIO_PHONE_NUMBER") || "+15614867429"
     const smsWebhookUrl = Deno.env.get("SMS_WEBHOOK_URL")
 
     if (smsWebhookUrl) {
