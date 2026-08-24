@@ -1,6 +1,6 @@
 export type Locale = 'en' | 'ar'
 export type Direction = 'ltr' | 'rtl'
-export type PageKey = 'home' | 'about' | 'projects' | 'approach' | 'people' | 'contact'
+export type PageKey = 'home' | 'about' | 'projects' | 'approach' | 'people' | 'contact' | 'admin'
 export type ProjectKind = 'commerce' | 'brand'
 
 export type Project = {

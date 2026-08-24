@@ -12,6 +12,8 @@ export function localeFromPathname(pathname: string): Locale {
 
 export function pageFromPathname(pathname: string): PageKey {
   const parts = pathname.split('/').filter(Boolean)
+  if (parts.includes('admin')) return 'admin'
   const candidate = parts[0] === 'en' || parts[0] === 'ar' ? parts[1] : parts[0]
+  if (candidate === 'admin') return 'admin'
   return publicPageKeys.includes(candidate as PageKey) ? candidate as PageKey : 'home'
 }

@@ -11,6 +11,7 @@ const seoCopy: Record<Locale, Record<PageKey, SeoCopy>> = {
     approach: { title: 'Approach | Clear digital products for ambitious businesses', description: 'The WebViewLabs approach: make the offer legible, the product useful, and the digital experience unmistakably yours.' },
     people: { title: 'People | Youssef Mohamed and Bejimy Milad | webviewlabs', description: 'Meet Youssef Mohamed and Bejimy Milad, the founders and engineers behind WebViewLabs digital products and brand systems.' },
     contact: { title: 'Start a project | webviewlabs', description: 'Tell WebViewLabs what is changing in your business. Share your context, ambition, and constraint to begin a focused digital project.' },
+    admin: { title: 'Admin Portal | webviewlabs', description: 'Internal admin portal for managing client briefs.' },
   },
   ar: {
     home: { title: 'webviewlabs | استوديو رقمي وتجارب تجارة إلكترونية وهوية للعلامات', description: 'webviewlabs استوديو رقمي من القاهرة يبني مواقع واضحة وتجارب تجارة إلكترونية ومنصات للعلامات ومنتجات رقمية للأعمال الطموحة.' },
@@ -19,6 +20,7 @@ const seoCopy: Record<Locale, Record<PageKey, SeoCopy>> = {
     approach: { title: 'منهجنا | منتجات رقمية واضحة للأعمال الطموحة', description: 'منهج webviewlabs: نبسّط قيمة العرض، نصمم منتجات مفيدة، ونبني تجربة رقمية تحمل بصمتك.' },
     people: { title: 'فريق webviewlabs | يوسف محمد وبيجيمي ميلاد', description: 'تعرّف على يوسف محمد وبيجيمي ميلاد، المؤسسين والمهندسين خلف منتجات webviewlabs الرقمية وأنظمة العلامات.' },
     contact: { title: 'ابدأ مشروعك | webviewlabs', description: 'شارك webviewlabs ما الذي يتغير في عملك. اكتب السياق والطموح والقيد الأهم لبدء مشروع رقمي واضح.' },
+    admin: { title: 'لوحة التحكم | webviewlabs', description: 'لوحة التحكم الداخلية لإدارة طلبات المشاريع.' },
   },
 }
 
