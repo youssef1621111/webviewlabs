@@ -116,7 +116,7 @@ Deno.serve(async (req: Request) => {
 
     const brevoApiKey = Deno.env.get("BREVO_API_KEY")
     const resendApiKey = Deno.env.get("RESEND_API_KEY")
-    const fromEmail = Deno.env.get("EMAIL_FROM") || "hello@webviewlabs.com"
+    const fromEmail = Deno.env.get("EMAIL_FROM") || "fathyyoussef162@gmail.com"
     const founderEmail = Deno.env.get("FOUNDER_EMAIL") || "admin@webviewlabs.com"
 
     // 1. Send Email via Brevo REST API v3
