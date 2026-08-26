@@ -114,8 +114,10 @@ Deno.serve(async (req: Request) => {
     let phoneSent = false
     let emailStatus = "pending"
 
-    const brevoApiKey = Deno.env.get("BREVO_API_KEY") || "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"
-    const resendApiKey = Deno.env.get("RESEND_API_KEY") || "re_XXFoB3jY_3DYaLo2FFS8rhfDLqYsZ8HNB"
+    const brevoApiKey = Deno.env.get("BREVO_API_KEY")
+    const resendApiKey = Deno.env.get("RESEND_API_KEY")
+    const fromEmail = Deno.env.get("EMAIL_FROM") || "hello@webviewlabs.com"
+    const founderEmail = Deno.env.get("FOUNDER_EMAIL") || "admin@webviewlabs.com"
 
     // 1. Send Email via Brevo REST API v3
     if (brevoApiKey && payload.email) {
@@ -127,7 +129,7 @@ Deno.serve(async (req: Request) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            sender: { name: "webviewlabs", email: "hello@webviewlabs.com" },
+            sender: { name: "webviewlabs", email: fromEmail },
             to: [{ email: payload.email, name: payload.name }],
             subject: `Brief received · webviewlabs (${payload.company})`,
             htmlContent: emailHtml,
@@ -167,8 +169,8 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // 3. Fallback: Internal alert via Resend
-    if (!emailSent && resendApiKey) {
+    // 3. Resend fallback/customer confirmation. Never send to a test recipient.
+    if (!emailSent && resendApiKey && payload.email) {
       try {
         const res = await fetch("https://api.resend.com/emails", {
           method: "POST",
@@ -177,13 +179,18 @@ Deno.serve(async (req: Request) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: "webviewlabs <onboarding@resend.dev>",
-            to: ["delivered@resend.dev"],
+            from: `webviewlabs <${fromEmail}>`,
+            to: [payload.email],
             subject: `🔥 New Lead: ${payload.company} (${payload.name}) · webviewlabs`,
             html: emailHtml,
           }),
         })
-        if (res.ok) emailStatus = "founder_alert_sent"
+        if (res.ok) {
+          emailSent = true
+          emailStatus = "sent_via_resend"
+        } else {
+          console.warn("Resend API response:", await res.text())
+        }
       } catch (e: any) {
         console.warn("Resend alert note:", e.message)
       }
@@ -192,7 +199,7 @@ Deno.serve(async (req: Request) => {
     // 4. Update status in Supabase Database
     const supabaseUrl = Deno.env.get("SUPABASE_URL")
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
-    if (supabaseUrl && supabaseServiceKey) {
+    if (supabaseUrl && supabaseServiceKey && payload.id) {
       try {
         const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey)
         await supabaseAdmin
@@ -207,9 +214,7 @@ Deno.serve(async (req: Request) => {
               processedAt: new Date().toISOString(),
             },
           })
-          .eq("phone", payload.phone)
-          .order("created_at", { ascending: false })
-          .limit(1)
+          .eq("id", payload.id)
       } catch (dbErr) {
         console.error("DB update error:", dbErr)
       }
@@ -221,7 +226,7 @@ Deno.serve(async (req: Request) => {
         emailSent,
         phoneSent,
         emailStatus,
-        message: "Notification pipeline executed.",
+        message: emailSent || phoneSent ? "Notification pipeline executed." : "Request received; no notification provider is configured.",
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )

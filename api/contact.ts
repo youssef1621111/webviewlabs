@@ -2,8 +2,8 @@ export const config = {
   runtime: 'edge',
 }
 
-const SUPABASE_URL = 'https://xiqldupgxasaqaswcdbs.supabase.co'
-const SUPABASE_KEY = 'sb_publishable_IyEQPWDQnrrC6PIHFdJWNw_K2iAA8BX'
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || ''
+const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || ''
 
 export default async function handler(req: Request) {
   if (req.method === 'OPTIONS') {
@@ -24,6 +24,9 @@ export default async function handler(req: Request) {
   }
 
   try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      return new Response(JSON.stringify({ error: 'Supabase is not configured' }), { status: 503, headers: { 'Content-Type': 'application/json' } })
+    }
     const payload = await req.json()
 
     if (!payload.name || !payload.phone || !payload.company || !payload.brief) {

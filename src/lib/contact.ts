@@ -47,23 +47,10 @@ export async function submitContact(payload: ContactPayload) {
 
       if (!error) {
         persisted = true
-        // Fire and forget background notification in next tick
-        setTimeout(() => {
-          try {
-            supabase?.functions
-              .invoke('contact-notify', {
-                body: {
-                  ...payload,
-                  phone,
-                },
-              })
-              .catch((notifyError) => {
-                console.warn('Background notification note:', notifyError)
-              })
-          } catch (e) {
-            console.warn('Notification invocation note:', e)
-          }
-        }, 10)
+        const { error: notifyError } = await supabase.functions.invoke('contact-notify', {
+          body: { ...payload, phone },
+        })
+        if (notifyError) console.warn('Contact notification note:', notifyError)
       } else {
         console.warn('Supabase client insert encountered error, attempting API fallback:', error)
       }
