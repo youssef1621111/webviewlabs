@@ -47,10 +47,12 @@ export async function submitContact(payload: ContactPayload) {
 
       if (!error) {
         persisted = true
-        const { error: notifyError } = await supabase.functions.invoke('contact-notify', {
-          body: { ...payload, phone },
-        })
-        if (notifyError) console.warn('Contact notification note:', notifyError)
+        // Call Vercel notify endpoint to send email via Gmail
+        fetch('/api/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, phone }),
+        }).catch(e => console.warn('Notify endpoint error:', e))
       } else {
         console.warn('Supabase client insert encountered error, attempting API fallback:', error)
       }
