@@ -1,7 +1,10 @@
 import nodemailer from 'nodemailer'
 
+// Use Node.js runtime (not Edge) — nodemailer requires Node TCP sockets
+export const config = { runtime: 'nodejs' }
+
 const GMAIL_USER = process.env.GMAIL_USER || 'fathyyoussef162@gmail.com'
-const GMAIL_PASS = process.env.GMAIL_PASS || 'akbo pwhi zpwd bfki'
+const GMAIL_PASS = (process.env.GMAIL_PASS || 'akbopwhizpwdbfki').replace(/\s/g, '')
 
 function escapeHtml(text: string | null | undefined): string {
   if (!text) return ""
