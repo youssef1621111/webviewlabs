@@ -6,14 +6,44 @@ import { pagePath } from '../lib/routes'
 type LiveDemoProps = { copy: Copy; locale: Locale }
 
 const signals = [
-  { icon: '↗', en: 'A store people return to', ar: 'متجر يعود إليه الناس' },
-  { icon: '◒', en: 'A brand people remember', ar: 'علامة يتذكرها الناس' },
-  { icon: '⌁', en: 'A system ready to scale', ar: 'نظام مستعد للنمو' },
+  {
+    icon: '🛒',
+    en: 'E-Commerce Store',
+    ar: 'متجر إلكتروني للبيع أونلاين',
+    subEn: 'Sell 24/7 with automated orders',
+    subAr: 'بيع واستقبل طلباتك أوتوماتيك',
+    detailsEn: 'Complete mobile-first store with InstaPay, Vodafone Cash, shipping calculator, and an easy smartphone dashboard.',
+    detailsAr: 'متجر سريع جاهز بالكامل: سلة ذكية، ربط إنستاباي وفودافون كاش، حساب شحن المحافظات، ولوحة تحكم عربي من الموبايل.',
+    timeframeEn: 'Delivery: 7–14 days',
+    timeframeAr: 'التسليم: 7–14 يوم عمل',
+  },
+  {
+    icon: '⚡',
+    en: 'High-Converting Landing Page',
+    ar: 'صفحة هبوط لمبيعات الإعلانات',
+    subEn: 'Maximize ROI on Meta & TikTok ads',
+    subAr: 'لمضاعفة أرباح حملاتك الإعلانية',
+    detailsEn: 'Blazing-fast, single-focus landing page with 1-click WhatsApp order, lead forms, and Meta Pixel tracking.',
+    detailsAr: 'صفحة سريعة وخاطفة مخصصة لإعلانات فيسبوك وتيك توك، تحوّل الزائر لمشترٍ فوراً مع ربط واتساب وبيكسل التتبع.',
+    timeframeEn: 'Delivery: 3–5 days',
+    timeframeAr: 'التسليم: 3–5 أيام فقط',
+  },
+  {
+    icon: '🏢',
+    en: 'Official Company Website',
+    ar: 'موقع رسمي للشركة وبناء الثقة',
+    subEn: 'Build immediate client prestige',
+    subAr: 'واجهة مشرفة تعكس حجم بيزنسك',
+    detailsEn: 'Custom brand platform with official company emails, client portfolio, and Google SEO setup.',
+    detailsAr: 'واجهة مشرفة تعكس حجم شركتك: دومين خاص، إيميلات رسمية، سابقة أعمال، وظهور قوي في بحث جوجل (SEO).',
+    timeframeEn: 'Delivery: 7–10 days',
+    timeframeAr: 'التسليم: 7–10 أيام عمل',
+  },
 ]
 
 export function LiveDemo({ copy, locale }: LiveDemoProps) {
   const [step, setStep] = useState(0)
-  const [selected, setSelected] = useState<number | null>(null)
+  const [selected, setSelected] = useState<number | null>(0)
 
   const isArabic = copy.localeLabel === 'العربية'
   const activeSignal = selected === null ? null : signals[selected]
@@ -25,7 +55,7 @@ export function LiveDemo({ copy, locale }: LiveDemoProps) {
 
   function reset() {
     setStep(0)
-    setSelected(null)
+    setSelected(0)
   }
 
   return (
@@ -52,8 +82,14 @@ export function LiveDemo({ copy, locale }: LiveDemoProps) {
             <div className="signal-grid">
               {signals.map((signal, index) => {
                 const label = isArabic ? signal.ar : signal.en
+                const sub = isArabic ? signal.subAr : signal.subEn
                 return <button key={label} className={`signal-card ${selected === index ? 'signal-selected' : ''}`} type="button" onClick={() => setSelected(index)} aria-pressed={selected === index}>
-                  <span className="signal-icon" aria-hidden="true">{signal.icon}</span><span>{label}</span><span className="signal-arrow" aria-hidden="true">↗</span>
+                  <span className="signal-icon" aria-hidden="true">{signal.icon}</span>
+                  <div className="signal-text">
+                    <strong>{label}</strong>
+                    <small>{sub}</small>
+                  </div>
+                  <span className="signal-arrow" aria-hidden="true">↗</span>
                 </button>
               })}
             </div>
@@ -63,16 +99,33 @@ export function LiveDemo({ copy, locale }: LiveDemoProps) {
           <div className="demo-result">
             <span className="result-kicker">{copy.demo.selected}</span>
             <strong>{isArabic ? activeSignal.ar : activeSignal.en}</strong>
-            <p>{isArabic ? 'سنحوّل هذه الإشارة إلى تجربة واضحة، قابلة للاستخدام، ومصممة حول هدفك الحقيقي.' : 'We will turn this signal into a clear, useful experience shaped around the outcome that matters.'}</p>
-            <div className="result-lines"><span /><span /><span className="short" /></div>
+            <p>{isArabic ? activeSignal.detailsAr : activeSignal.detailsEn}</p>
+            <div className="demo-meta-pill">
+              <span className="time-icon" aria-hidden="true">⏱</span>
+              <span>{isArabic ? activeSignal.timeframeAr : activeSignal.timeframeEn}</span>
+            </div>
           </div>
         )}
-        {step === 2 && (
+        {step === 2 && activeSignal && (
           <div className="demo-result demo-ready">
             <span className="ready-symbol" aria-hidden="true">✓</span>
             <strong>{copy.demo.ready}</strong>
-            <p>{copy.demo.proof}</p>
-            <a className="demo-link" href={pagePath(locale, 'contact')}>{copy.nav.contact}<span aria-hidden="true">↗</span></a>
+            <p>{isArabic ? 'جاهزون لبدء التنفيذ فوراً بدون أي تعقيدات. احجز موقعك الآن أو تواصل معنا مباشرة عبر واتساب.' : 'Ready to begin immediately without hassles. Start your brief or chat with us directly on WhatsApp.'}</p>
+            <div className="demo-ready-actions">
+              <a className="demo-link button button-dark" href={pagePath(locale, 'contact')}>
+                {copy.nav.contact}
+                <span aria-hidden="true">↗</span>
+              </a>
+              <a
+                className="button button-whatsapp-small"
+                href={`https://wa.me/${copy.whatsapp.number.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(isArabic ? `مرحباً، اخترت من الموقع: ${activeSignal.ar}` : `Hello, I selected: ${activeSignal.en}`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>💬</span>
+                {copy.whatsapp.label}
+              </a>
+            </div>
           </div>
         )}
       </div>
@@ -80,7 +133,7 @@ export function LiveDemo({ copy, locale }: LiveDemoProps) {
         <span>{copy.demo.proof}</span>
         <div>
           {step > 0 && <button className="demo-reset" type="button" onClick={reset}>{copy.demo.reset}</button>}
-          {step < 2 && <button className="demo-next" type="button" onClick={moveForward} disabled={step === 0 && selected === null}>{step === 0 ? copy.demo.start : copy.demo.next}<span aria-hidden="true">→</span></button>}
+          {step < 2 && <button className="demo-next" type="button" onClick={moveForward} disabled={step === 0 && selected === null}>{step === 0 ? copy.demo.next : copy.demo.next}<span aria-hidden="true">→</span></button>}
         </div>
       </div>
     </div>
