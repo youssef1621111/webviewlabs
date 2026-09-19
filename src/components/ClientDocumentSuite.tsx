@@ -11,8 +11,8 @@ import {
 import { supabase } from '../lib/supabase'
 import type { Locale } from '../types'
 
-const SUPABASE_URL = 'https://xiqldupgxasaqaswcdbs.supabase.co'
-const SUPABASE_KEY = 'sb_publishable_IyEQPWDQnrrC6PIHFdJWNw_K2iAA8BX'
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://kmfyksthoqjobxfypqvy.supabase.co'
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_XM7Ic9i_SogewAr5gXgshw__E7Qh6i-'
 
 type ClientDocumentSuiteProps = {
   client: ClientInfo
