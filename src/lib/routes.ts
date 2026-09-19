@@ -7,7 +7,7 @@ export function pagePath(locale: Locale, page: PageKey): string {
 }
 
 export function localeFromPathname(pathname: string): Locale {
-  return pathname.split('/').filter(Boolean)[0] === 'ar' ? 'ar' : 'en'
+  return pathname.split('/').filter(Boolean)[0] === 'en' ? 'en' : 'ar'
 }
 
 export function pageFromPathname(pathname: string): PageKey {

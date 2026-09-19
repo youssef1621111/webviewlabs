@@ -84,7 +84,7 @@ export const content: Record<'en' | 'ar', Copy> = {
     faq: {
       eyebrow: 'Direct Answers',
       title: 'Questions every business owner asks (with straight answers)',
-      subtitle: 'Everything you need to know before starting — clear, direct, and easy as a piece of pie.',
+      subtitle: 'Everything you need to know before starting — clear, direct, and straightforward.',
       items: [
         {
           question: 'I have zero tech or programming experience. Can I easily manage the website myself?',
@@ -134,9 +134,9 @@ export const content: Record<'en' | 'ar', Copy> = {
       storyTitle: 'Direct builders, zero agency bureaucracy.',
       storyBody: 'You deal directly with the senior engineers who actually build your project. No intermediaries, no empty promises: we listen to your business goals and deliver what generates real revenue in the shortest time.',
       promiseTitle: 'Our brand promise',
-      promiseBody: 'Easy as a piece of pie. Fast, reliable, and drives real business.',
+      promiseBody: 'Completely frictionless, fast, and engineered for real sales.',
       principles: [
-        { label: 'Easy as a piece of pie', body: 'Simple for your customers to buy in seconds, and simple for you to manage from your phone without tech stress.' },
+        { label: 'Simple and stress-free', body: 'Simple for your customers to buy in seconds, and simple for you to manage from your phone without tech stress.' },
         { label: 'Built for real sales', body: 'Every button, photo, and section is engineered for one goal: earning trust and turning visitors into paying clients.' },
         { label: 'Yours forever with continuous support', body: 'No hidden monthly lock-ins; your website is 100% yours, backed by reliable direct technical assistance.' },
       ],
@@ -291,7 +291,7 @@ export const content: Record<'en' | 'ar', Copy> = {
     faq: {
       eyebrow: 'إجابات مباشرة وصريحة',
       title: 'أسئلة بيسألها كل صاحب بيزنس في مصر.. وإجاباتها بدون لف',
-      subtitle: 'كل اللي محتاج تعرفه قبل ما تبدأ، مشروح بوضوح وسلاسة كقطعة كيك.',
+      subtitle: 'كل اللي محتاج تعرفه قبل ما تبدأ، إجابات واضحة وصريحة تريح بالك وتجاوب على كل تساؤلاتك.',
       items: [
         {
           question: 'أنا معنديش أي خبرة في التكنولوجيا أو البرمجة، هل هعرف أدير الموقع بنفسي؟',
@@ -341,9 +341,9 @@ export const content: Record<'en' | 'ar', Copy> = {
       storyTitle: 'فريق مباشر.. بدون وسطاء وبدون تعقيد',
       storyBody: 'بتتعامل مباشرة مع المهندسين اللي بيبنوا موقعك بأيديهم. مفيش طبقات ولا وعود معقدة؛ بنسمع منك، نفهم بيزنسك، وننفذ بالظبط اللي يحققلك أعلى عائد ومبيعات في أسرع وقت.',
       promiseTitle: 'وعدنا لكل عميل',
-      promiseBody: 'سهل كقطعة كيك، سريع، وبيجيب نتيجة حقيقية.',
+      promiseBody: 'بمنتهى السهولة، بدون أي تعقيد، وبنتيجة ومبيعات حقيقية.',
       principles: [
-        { label: 'سهولة تامة (قطعة كيك)', body: 'واجهة بسيطة لزبونك يطلب في ثوانٍ، ولوحة تحكم سهلة ليك تدير منتجاتك من موبايلك.' },
+        { label: 'سهولة تامة وراحة بال', body: 'واجهة بسيطة جداً لزبونك يطلب في ثوانٍ، ولوحة تحكم عربي سهلة ليك تدير كل شغلك من موبايلك بدون أي وجع دماغ.' },
         { label: 'بيزنس حقيقي ومبيعات', body: 'كل تفصيلة في الموقع معمولة لغرض واحد: كسب ثقة العميل وزيادة الأوردرات.' },
         { label: 'ملكك بالكامل ودعم دائم', body: 'الموقع ملكك أنت بالكامل وبدون اشتراكات خفية، مع دعم فني مستمر في أي وقت.' },
       ],

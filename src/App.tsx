@@ -206,6 +206,13 @@ function App() {
   const copy = useMemo(() => content[locale], [locale])
 
   useEffect(() => {
+    if (window.location.pathname === '/' || window.location.pathname === '') {
+      window.history.replaceState({}, '', '/ar/')
+      setLocale('ar')
+    }
+  }, [])
+
+  useEffect(() => {
     const handlePopState = () => {
       setLocale(localeFromPathname(window.location.pathname))
       setPage(pageFromPathname(window.location.pathname))
