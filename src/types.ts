@@ -17,6 +17,48 @@ export type Project = {
   demoLabel: string
 }
 
+export type ServiceItem = {
+  id: string
+  title: string
+  badge: string
+  tagline: string
+  description: string
+  forWhom: string
+  deliverables: string[]
+  timeframe: string
+  cta: string
+}
+
+export type FaqItem = {
+  question: string
+  answer: string
+  highlight?: string
+}
+
+export type ServicesCopy = {
+  eyebrow: string
+  title: string
+  subtitle: string
+  items: ServiceItem[]
+}
+
+export type FaqCopy = {
+  eyebrow: string
+  title: string
+  subtitle: string
+  items: FaqItem[]
+  askMoreCta: string
+  askMoreBody: string
+}
+
+export type WhatsAppCopy = {
+  label: string
+  tooltip: string
+  number: string
+  message: string
+  directCta: string
+}
+
 export type Copy = {
   localeLabel: string
   nav: {
@@ -38,6 +80,9 @@ export type Copy = {
     note: string
   }
   proof: Array<{ value: string; label: string }>
+  services: ServicesCopy
+  faq: FaqCopy
+  whatsapp: WhatsAppCopy
   about: {
     eyebrow: string
     title: string

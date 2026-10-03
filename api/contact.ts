@@ -3,8 +3,8 @@ import nodemailer from 'nodemailer'
 // Use Node.js runtime (not Edge) — nodemailer requires Node TCP sockets
 export const config = { runtime: 'nodejs' }
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://jlotkzjjtldecttprony.supabase.co'
-const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_CS2LkhqxOXwxQfMB3yCZNg_6g_3n0Rf'
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://jlotkzjjtldecttprony.supabase.co'
+const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_secret_MSobUDXMjknekFJxGVN7lw_GIrtaM2o'
 
 const GMAIL_USER = process.env.GMAIL_USER || 'fathyyoussef162@gmail.com'
 const GMAIL_PASS = (process.env.GMAIL_PASS || 'akbopwhizpwdbfki').replace(/\s/g, '')

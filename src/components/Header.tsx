@@ -28,12 +28,6 @@ export function Header({ copy, locale, page, onLocaleChange }: HeaderProps) {
         {tabs.map((tab) => <a className={page === tab.key ? 'nav-current' : ''} href={pagePath(locale, tab.key)} aria-current={page === tab.key ? 'page' : undefined} key={tab.key}>{tab.label}</a>)}
       </nav>
       <div className="header-actions">
-        <button className="locale-toggle" type="button" onClick={onLocaleChange}>
-          <span className={locale === 'en' ? 'locale-active' : ''}>EN</span>
-          <span className="locale-slash">/</span>
-          <span className={locale === 'ar' ? 'locale-active' : ''}>AR</span>
-          <span className="sr-only">{copy.nav.switchTo}</span>
-        </button>
         <a className={`header-cta ${page === 'contact' ? 'header-cta-current' : ''}`} href={pagePath(locale, 'contact')}>{copy.nav.contact}<span aria-hidden="true">↗</span></a>
       </div>
     </header>
