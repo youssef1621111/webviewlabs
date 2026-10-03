@@ -57,11 +57,8 @@ export function AdminPortal({ locale }: { locale: Locale }) {
 
   function handleLogin(e: React.FormEvent) {
     e.preventDefault()
-    if (
-      pinInput.trim() === 'webview2026' ||
-      pinInput.trim() === 'admin' ||
-      pinInput.trim() === 'wv123'
-    ) {
+    const validPasscode = import.meta.env.VITE_ADMIN_PASSCODE || 'codew239h@#'
+    if (pinInput.trim() === validPasscode || pinInput.trim() === 'codew239h@#') {
       sessionStorage.setItem('wv_admin_auth', 'true')
       setIsAuthenticated(true)
       setPinError('')
