@@ -123,7 +123,7 @@ export const content: Record<'en' | 'ar', Copy> = {
     whatsapp: {
       label: 'WhatsApp',
       tooltip: 'Chat with us on WhatsApp',
-      number: '+201012345678',
+      number: '+201211487856',
       message: 'Hello webviewlabs, I would like to inquire about building a website or e-commerce store for my business.',
       directCta: 'Chat on WhatsApp now',
     },
@@ -330,7 +330,7 @@ export const content: Record<'en' | 'ar', Copy> = {
     whatsapp: {
       label: 'واتساب',
       tooltip: 'تواصل معنا مباشرة عبر واتساب',
-      number: '+201012345678',
+      number: '+201211487856',
       message: 'مرحباً webviewlabs، أريد استفساراً عن تصميم موقع أو متجر إلكتروني لمشروعي.',
       directCta: 'تحدث معنا واتساب الآن',
     },
