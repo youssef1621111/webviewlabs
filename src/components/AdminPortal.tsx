@@ -5,8 +5,8 @@ import { CrmDashboard } from './CrmDashboard'
 import type { Locale } from '../types'
 import type { ClientInfo } from '../lib/clientDocuments'
 
-const SUPABASE_URL = 'https://xiqldupgxasaqaswcdbs.supabase.co'
-const SUPABASE_KEY = 'sb_publishable_IyEQPWDQnrrC6PIHFdJWNw_K2iAA8BX'
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://jlotkzjjtldecttprony.supabase.co'
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_CS2LkhqxOXwxQfMB3yCZNg_6g_3n0Rf'
 
 export type Submission = {
   id: number

@@ -308,13 +308,15 @@ async function fetchAiCompletion(
 
   // 1. Try Supabase Edge Function (active and deployed with CORS headers)
   try {
-    const res = await fetch('https://xiqldupgxasaqaswcdbs.supabase.co/functions/v1/ai-cfo', {
+    const sbUrl = import.meta.env.VITE_SUPABASE_URL || 'https://jlotkzjjtldecttprony.supabase.co'
+    const sbKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_CS2LkhqxOXwxQfMB3yCZNg_6g_3n0Rf'
+    const res = await fetch(`${sbUrl}/functions/v1/ai-cfo`, {
       method: 'POST',
       signal,
       headers: {
         'Content-Type': 'application/json',
-        apikey: 'sb_publishable_IyEQPWDQnrrC6PIHFdJWNw_K2iAA8BX',
-        Authorization: 'Bearer sb_publishable_IyEQPWDQnrrC6PIHFdJWNw_K2iAA8BX',
+        apikey: sbKey,
+        Authorization: `Bearer ${sbKey}`,
       },
       body: JSON.stringify(payload),
     })

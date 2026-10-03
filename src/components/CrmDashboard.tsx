@@ -4,8 +4,8 @@ import { calcStudioTotals, calcDealFinancials, fmt, DEFAULT_TASKS, extractFinanc
 import { AiAnalyst } from './AiAnalyst'
 import type { Locale } from '../types'
 
-const SUPABASE_URL = 'https://xiqldupgxasaqaswcdbs.supabase.co'
-const SUPABASE_KEY = 'sb_publishable_IyEQPWDQnrrC6PIHFdJWNw_K2iAA8BX'
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://jlotkzjjtldecttprony.supabase.co'
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_CS2LkhqxOXwxQfMB3yCZNg_6g_3n0Rf'
 
 async function dbGet(path: string) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
