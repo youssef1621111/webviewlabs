@@ -13,7 +13,7 @@
     "@supabase/server": "^1.7.0",
     "@supabase/supabase-js": "2.57.4",
     "@vercel/analytics": "^2.0.1",
-    "nodemailer": "^9.0.6",
+    "nodemailer": "^10.1.4",
     "react": "19.1.1",
     "react-dom": "19.1.1"
   },
@@ -23,6 +23,6 @@
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
     "typescript": "5.8.3",
-    "vite": "7.3.6"
+    "vite": "7.3.8"
   }
 }
